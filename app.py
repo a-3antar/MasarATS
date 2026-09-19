@@ -1,0 +1,161 @@
+"""
+SmartATS AI - نقطة الدخول الرئيسية.
+
+هذه المرحلة (Phase 0/1) تحتوي فقط على:
+- تهيئة قاعدة البيانات
+- تسجيل الدخول / إنشاء حساب جديد
+- صفحة رئيسية بسيطة بعد الدخول
+
+لا تحتوي هذه الطبقة (app.py) على أي منطق أعمال أو استعلامات قاعدة بيانات
+مباشرة — كل ذلك يمر عبر services/auth_service.py كما تنص المعمارية.
+"""
+
+import streamlit as st
+
+from core.enums import UserRole
+from core.exceptions import AuthenticationError, InactiveUserError, SmartATSError, UserAlreadyExistsError
+from core.logging import setup_logging
+from database.database import get_db_session, init_db
+from services.auth_service import AuthService
+
+st.set_page_config(page_title="SmartATS AI", page_icon="🧩", layout="wide")
+
+
+@st.cache_resource
+def _bootstrap() -> None:
+    """تُنفَّذ مرة واحدة فقط عند أول تشغيل للتطبيق (بفضل cache_resource)."""
+    setup_logging()
+    init_db()
+
+
+_bootstrap()
+
+
+def _init_session_state() -> None:
+    if "user" not in st.session_state:
+        st.session_state.user = None  # dict بسيط: id / username / full_name / role
+
+
+def _login_view() -> None:
+    st.title("🧩 SmartATS AI")
+    st.caption("نظام إدارة التوظيف المدعوم بالذكاء الاصطناعي")
+
+    tab_login, tab_register = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
+
+    with tab_login:
+        with st.form("login_form"):
+            username = st.text_input("اسم المستخدم")
+            password = st.text_input("كلمة المرور", type="password")
+            submitted = st.form_submit_button("دخول", width='stretch')
+
+        if submitted:
+            try:
+                with get_db_session() as session:
+                    user = AuthService(session).authenticate(username, password)
+                    st.session_state.user = {
+                        "id": user.id,
+                        "username": user.username,
+                        "full_name": user.full_name,
+                        "role": user.role,
+                    }
+                st.rerun()
+            except (AuthenticationError, InactiveUserError) as exc:
+                st.error(str(exc))
+            except SmartATSError as exc:
+                st.error(f"حدث خطأ: {exc}")
+
+    with tab_register:
+        with st.form("register_form"):
+            full_name = st.text_input("الاسم الكامل")
+            new_username = st.text_input("اسم المستخدم (بالإنجليزية، بدون مسافات)")
+            new_email = st.text_input("البريد الإلكتروني")
+            new_password = st.text_input("كلمة المرور", type="password")
+            new_password_confirm = st.text_input("تأكيد كلمة المرور", type="password")
+            register_submitted = st.form_submit_button("إنشاء الحساب", width='stretch')
+
+        if register_submitted:
+            if new_password != new_password_confirm:
+                st.error("كلمتا المرور غير متطابقتين.")
+            else:
+                try:
+                    with get_db_session() as session:
+                        auth_service = AuthService(session)
+                        # أول مستخدم في النظام يصبح Admin تلقائياً، والباقي Recruiter افتراضياً
+                        role = UserRole.ADMIN if not auth_service.has_any_user() else UserRole.RECRUITER
+                        auth_service.register_user(
+                            username=new_username,
+                            email=new_email,
+                            full_name=full_name,
+                            password=new_password,
+                            role=role,
+                        )
+                    st.success("تم إنشاء الحساب بنجاح. يمكنك تسجيل الدخول الآن من التبويب المجاور.")
+                except UserAlreadyExistsError as exc:
+                    st.error(str(exc))
+                except SmartATSError as exc:
+                    st.error(str(exc))
+
+
+PAGES = {
+    "🏠 الرئيسية": "home",
+    "📄 رفع سيرة ذاتية": "upload_cv",
+    "👥 المرشحون": "candidates",
+    "💼 الوظائف": "jobs",
+    "🎯 المطابقة": "matching",
+}
+
+
+def _render_home(user: dict) -> None:
+    st.title("🧩 SmartATS AI")
+    st.success(f"مرحباً {user['full_name']} 👋")
+    st.markdown(
+        """
+1. **رفع سيرة ذاتية** — ارفع ملف PDF/DOCX/TXT وسيتم إنشاء مرشح تلقائياً.
+2. **المرشحون** — تصفّح وابحث في المرشحين، أو أضف واحداً يدوياً.
+3. **الوظائف** — أضف وظيفة شاغرة مع المهارات والخبرة المطلوبة.
+4. **المطابقة** — اختر وظيفة واحصل على ترتيب المرشحين مع تفسير الدرجة.
+        """
+    )
+
+
+def _authenticated_view() -> None:
+    user = st.session_state.user
+
+    with st.sidebar:
+        st.markdown(f"**{user['full_name']}**")
+        st.caption(f"@{user['username']} · {user['role']}")
+        st.divider()
+        selected_page = st.radio("التنقل", list(PAGES.keys()), label_visibility="collapsed")
+        st.divider()
+        if st.button("تسجيل الخروج", width='stretch'):
+            st.session_state.user = None
+            st.rerun()
+
+    page_key = PAGES[selected_page]
+
+    if page_key == "home":
+        _render_home(user)
+    elif page_key == "upload_cv":
+        from pages import upload_cv
+        upload_cv.render()
+    elif page_key == "candidates":
+        from pages import candidates
+        candidates.render()
+    elif page_key == "jobs":
+        from pages import jobs
+        jobs.render()
+    elif page_key == "matching":
+        from pages import matching
+        matching.render()
+
+
+def main() -> None:
+    _init_session_state()
+    if st.session_state.user is None:
+        _login_view()
+    else:
+        _authenticated_view()
+
+
+if __name__ == "__main__":
+    main()

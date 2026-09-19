@@ -1,0 +1,1 @@
+streamlit run "E:\Work\Masar\V1.0\app.py"
