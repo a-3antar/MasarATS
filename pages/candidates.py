@@ -21,7 +21,7 @@ def render() -> None:
 
         rows = [
             {
-                "الاسم": c.full_name,
+                "الاسم": c.full_name.title(),
                 "البريد": c.email or "-",
                 "الهاتف": c.phone or "-",
                 "المسمى الحالي": c.current_position or "-",
@@ -37,7 +37,7 @@ def render() -> None:
 
     with st.expander("➕ إضافة مرشح يدوياً"):
         with st.form("manual_candidate_form"):
-            full_name = st.text_input("الاسم الكامل *")
+            full_name = st.text_input("الاسم الكامل *").title()
             email = st.text_input("البريد الإلكتروني")
             phone = st.text_input("الهاتف")
             current_position = st.text_input("المسمى الوظيفي الحالي")

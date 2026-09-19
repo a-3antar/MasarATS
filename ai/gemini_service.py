@@ -7,6 +7,7 @@
 """
 
 import json
+from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
@@ -16,6 +17,49 @@ from core.exceptions import AIServiceError
 from core.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _pydantic_to_gemini_schema(schema: type[BaseModel]) -> dict[str, Any]:
+    """
+    يحوّل Pydantic model إلى مخطط يقبله google-generativeai.
+
+    مكتبة Gemini لا تدعم حقولاً يولّدها Pydantic مثل: default, title, $ref, $defs, anyOf.
+    لذلك نفكّ الـ $ref، ونحوّل anyOf [X, null] إلى X مع nullable=True،
+    ونحذف كل الحقول غير المدعومة، ونكتب الأنواع بأحرف كبيرة (STRING, OBJECT...).
+    """
+    json_schema = schema.model_json_schema()
+    definitions: dict[str, Any] = json_schema.get("$defs", {})
+
+    def convert(node: dict[str, Any]) -> dict[str, Any]:
+        if "$ref" in node:
+            return convert(definitions[node["$ref"].split("/")[-1]])
+
+        if "anyOf" in node:
+            options = node["anyOf"]
+            non_null = [o for o in options if o.get("type") != "null"]
+            result = convert(non_null[0]) if non_null else {"type": "STRING"}
+            if len(non_null) < len(options):
+                result["nullable"] = True
+            return result
+
+        node_type = str(node.get("type", "string")).upper()
+        result: dict[str, Any] = {"type": node_type}
+
+        if node_type == "OBJECT":
+            result["properties"] = {
+                name: convert(prop) for name, prop in node.get("properties", {}).items()
+            }
+            if node.get("required"):
+                result["required"] = node["required"]
+        elif node_type == "ARRAY":
+            result["items"] = convert(node.get("items", {"type": "string"}))
+
+        if "enum" in node:
+            result["enum"] = node["enum"]
+
+        return result
+
+    return convert(json_schema)
 
 
 class GeminiService(AIProvider):
@@ -38,26 +82,23 @@ class GeminiService(AIProvider):
     def extract_structured(self, text: str, schema: type[BaseModel]) -> BaseModel:
         from ai.prompts import CV_EXTRACTION_PROMPT_TEMPLATE
 
-        # نبني الموديل هنا (وليس في __init__) لأن response_schema يعتمد على الـ schema
-        # الممرَّر لكل استدعاء - يسمح باستخدام GeminiService لأكثر من نوع مخطط لاحقاً.
-        model = self._genai.GenerativeModel(
-            model_name=self._settings.ai_model,
-            generation_config={
-                "temperature": self._settings.ai_temperature,
-                "response_mime_type": "application/json",
-                # هذا هو الإصلاح الأساسي: إلزام Gemini فعلياً بالمخطط بدل الاعتماد فقط
-                # على وصفه نصياً في الـ prompt، وهو ما كان يسبب إرجاع حقول null
-                # (مثل full_name وemail) رغم وجودها بوضوح في النص.
-                "response_schema": schema,
-                # الحد الافتراضي قد يقطع الاستجابة في سير ذاتية طويلة (30+ سنة خبرة مثلاً)
-                "max_output_tokens": 8192,
-            },
-        )
-
-        prompt = CV_EXTRACTION_PROMPT_TEMPLATE.format(cv_text=text[:15000])  # حد أمان بسيط لطول النص
-
         raw_text = ""
         try:
+            # نبني الموديل هنا (وليس في __init__) لأن response_schema يعتمد على الـ schema
+            # الممرَّر لكل استدعاء. التحويل داخل try حتى لا يخرج أي خطأ خام للواجهة.
+            model = self._genai.GenerativeModel(
+                model_name=self._settings.ai_model,
+                generation_config={
+                    "temperature": self._settings.ai_temperature,
+                    "response_mime_type": "application/json",
+                    "response_schema": _pydantic_to_gemini_schema(schema),
+                    # الحد الافتراضي قد يقطع الاستجابة في سير ذاتية طويلة
+                    "max_output_tokens": 8192,
+                },
+            )
+
+            prompt = CV_EXTRACTION_PROMPT_TEMPLATE.format(cv_text=text[:15000])  # حد أمان لطول النص
+
             response = model.generate_content(prompt)
             raw_text = response.text
             raw_json = json.loads(raw_text)

@@ -66,7 +66,7 @@ def _login_view() -> None:
 
     with tab_register:
         with st.form("register_form"):
-            full_name = st.text_input("الاسم الكامل")
+            full_name = st.text_input("الاسم الكامل").title()
             new_username = st.text_input("اسم المستخدم (بالإنجليزية، بدون مسافات)")
             new_email = st.text_input("البريد الإلكتروني")
             new_password = st.text_input("كلمة المرور", type="password")

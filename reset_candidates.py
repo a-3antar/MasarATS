@@ -14,7 +14,7 @@ def main() -> None:
     with get_db_session() as session:
         deleted_apps = session.query(Application).delete()
         deleted_candidates = session.query(Candidate).delete()
-    print(f"تم حذف {deleted_candidates} مرشح و {deleted_apps} تقديم.")
+    print(f"Deleted {deleted_candidates} candidates and {deleted_apps} applications.")
 
 
 if __name__ == "__main__":
