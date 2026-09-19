@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Float, String, Text
+from sqlalchemy import JSON, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.database import Base
@@ -18,17 +18,25 @@ class Candidate(Base):
     __tablename__ = "candidates"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    candidate_code: Mapped[str | None] = mapped_column(String(20), index=True, nullable=True)  # CAND-2026-001
 
     # معلومات شخصية
     full_name: Mapped[str] = mapped_column(String(150), nullable=False)
     email: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    linkedin_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     location: Mapped[str | None] = mapped_column(String(150), nullable=True)
     photo_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # مسار نسبي لجذر المشروع
+
+    # الحالة الشخصية
+    marital_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    military_status: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    languages: Mapped[list] = mapped_column(JSON, default=list, nullable=True)
 
     # معلومات مهنية
     current_position: Mapped[str | None] = mapped_column(String(150), nullable=True)
     total_experience_years: Mapped[float | None] = mapped_column(Float, nullable=True)
+    previous_positions: Mapped[list] = mapped_column(JSON, default=list, nullable=True)
 
     # قوائم مرنة نخزّنها JSON في هذه المرحلة لتفادي جداول فرعية معقدة قبل استقرار المتطلبات.
     # skills = "مهارات أخرى" لا تنتمي لأي فئة من الفئات المفصّلة أدناه.
@@ -45,6 +53,17 @@ class Candidate(Base):
     previous_companies: Mapped[list] = mapped_column(JSON, default=list, nullable=True)
 
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # بيانات إدارة التوظيف (يدخلها مسؤول التوظيف)
+    applied_job: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    status: Mapped[str | None] = mapped_column(String(20), default="New", nullable=True)
+    rating: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1 إلى 5
+    expected_salary: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notice_period_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    recruiter_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ترجمات البيانات: {"ar": {"summary": "...", "soft_skills": [...], ...}} - الأصل يبقى بالإنجليزية
+    translations: Mapped[dict] = mapped_column(JSON, default=dict, nullable=True)
 
     # بيانات المستند الأصلي
     source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)

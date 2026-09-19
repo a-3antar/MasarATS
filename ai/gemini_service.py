@@ -112,3 +112,31 @@ class GeminiService(AIProvider):
         except Exception as exc:
             logger.error("Gemini call failed: %s | raw_response=%s", exc, raw_text[:2000])
             raise AIServiceError(f"فشل استدعاء Gemini: {exc}") from exc
+
+    def translate_json(self, data: dict[str, Any], target_language: str = "Arabic") -> dict[str, Any]:
+        """يترجم قيم dict إلى اللغة المطلوبة مع الحفاظ على البنية. يرفع AIServiceError عند الفشل."""
+        from ai.prompts import TRANSLATION_PROMPT_TEMPLATE
+
+        raw_text = ""
+        try:
+            model = self._genai.GenerativeModel(
+                model_name=self._settings.ai_model,
+                generation_config={
+                    "temperature": 0.1,
+                    "response_mime_type": "application/json",
+                    "max_output_tokens": 8192,
+                },
+            )
+            prompt = TRANSLATION_PROMPT_TEMPLATE.format(
+                language=target_language,
+                payload=json.dumps(data, ensure_ascii=False),
+            )
+            response = model.generate_content(prompt)
+            raw_text = response.text
+            result = json.loads(raw_text)
+            if not isinstance(result, dict):
+                raise ValueError("الاستجابة ليست كائن JSON.")
+            return result
+        except Exception as exc:
+            logger.error("Gemini translation failed: %s | raw_response=%s", exc, raw_text[:2000])
+            raise AIServiceError(f"فشل ترجمة البيانات: {exc}") from exc

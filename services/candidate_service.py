@@ -2,11 +2,13 @@
 خدمة المرشحين.
 تُدير سير عمل رفع السيرة الذاتية بالكامل:
 ملف → استخلاص نص وصورة → (AI أو استخلاص احتياطي بسيط) → تحقق Pydantic → حفظ في القاعدة.
+كما تدير تعديل المرشح وترجمة بياناته للعربية (مع بقاء الأصل الإنجليزي).
 """
 
 import hashlib
 import io
 import uuid
+from datetime import date
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -26,6 +28,7 @@ from document_processing.factory import DocumentParserFactory
 from models.candidate import Candidate
 from repositories.candidate_repository import CandidateRepository
 from services.experience_calculator import estimate_total_years
+
 logger = get_logger(__name__)
 
 PHOTOS_DIR = BASE_DIR / PHOTOS_SUBDIR
@@ -34,8 +37,21 @@ PHOTOS_DIR = BASE_DIR / PHOTOS_SUBDIR
 _EDITABLE_FIELDS = {
     "full_name", "email", "phone", "location", "current_position", "total_experience_years",
     "summary", "skills", "technical_skills", "computer_skills", "managerial_skills",
-    "soft_skills", "industries", "previous_companies",
+    "soft_skills", "industries", "previous_companies", "previous_positions",
+    "linkedin_url", "marital_status", "military_status", "languages",
+    "applied_job", "status", "rating", "expected_salary", "notice_period_days", "recruiter_notes",
 }
+
+# الحقول التي تُترجم (أسماء الشركات والتواريخ تبقى كما هي)
+_TRANSLATABLE_FIELDS = (
+    "current_position", "location", "summary",
+    "technical_skills", "computer_skills", "managerial_skills", "soft_skills", "skills",
+    "industries", "previous_positions", "languages", "marital_status", "military_status",
+    "education", "experience",
+)
+# مفاتيح داخل عناصر education/experience لا نقبل ترجمتها
+_NON_TRANSLATED_KEYS = {"company", "start_date", "end_date", "graduation_year"}
+_TARGET_LANGUAGE_NAMES = {"ar": "Arabic"}
 
 
 class CandidateService:
@@ -71,8 +87,12 @@ class CandidateService:
             full_name=profile.full_name or Path(original_filename).stem,
             email=profile.email,
             phone=profile.phone,
+            linkedin_url=profile.linkedin_url,
             location=profile.location,
             photo_path=self._save_photo(photo[0], file_hash[:16]) if photo else None,
+            marital_status=profile.marital_status,
+            military_status=profile.military_status,
+            languages=profile.languages,
             current_position=profile.current_position,
             total_experience_years=estimate_total_years(profile.experience) or profile.total_experience_years,
             skills=profile.skills,
@@ -81,16 +101,19 @@ class CandidateService:
             managerial_skills=profile.managerial_skills,
             soft_skills=profile.soft_skills,
             industries=profile.industries,
-            previous_companies=self._unique_companies(profile.experience),
+            previous_companies=self._unique_field(profile.experience, "company"),
+            previous_positions=self._unique_field(profile.experience, "position"),
             education=[e.model_dump() for e in profile.education],
             experience=[e.model_dump() for e in profile.experience],
             summary=profile.summary,
+            status="New",
             source_filename=original_filename,
             file_hash=file_hash,
             raw_text=raw_text,
             ai_analyzed=self._ai_available(),
         )
         self._candidates.add(candidate)
+        self._assign_code(candidate)
         logger.info("Candidate created from CV upload: %s (%s)", candidate.full_name, original_filename)
         return candidate
 
@@ -111,16 +134,21 @@ class CandidateService:
             return extract_basic_profile(raw_text, fallback_name)
 
     @staticmethod
-    def _unique_companies(experience: list[ExperienceItem]) -> list[str]:
-        """أسماء الشركات السابقة من قائمة الخبرات (بنفس الترتيب وبدون تكرار)."""
-        companies: list[str] = []
+    def _unique_field(experience: list[ExperienceItem], attr: str) -> list[str]:
+        """قيم حقل نصي (company / position) من قائمة الخبرات بنفس الترتيب وبدون تكرار."""
+        values: list[str] = []
         seen: set[str] = set()
         for item in experience:
-            name = (item.company or "").strip()
-            if name and name.lower() not in seen:
-                seen.add(name.lower())
-                companies.append(name)
-        return companies
+            value = (getattr(item, attr, None) or "").strip()
+            if value and value.lower() not in seen:
+                seen.add(value.lower())
+                values.append(value)
+        return values
+
+    @staticmethod
+    def _assign_code(candidate: Candidate) -> None:
+        """كود مقروء فريد مثل CAND-2026-001 (يعتمد على id بعد الـ flush)."""
+        candidate.candidate_code = f"CAND-{date.today().year}-{candidate.id:03d}"
 
     @staticmethod
     def _ai_available() -> bool:
@@ -186,6 +214,78 @@ class CandidateService:
         self._delete_photo_file(candidate.photo_path)
         candidate.photo_path = None
 
+    # ---------------------------------------------------------- الترجمة
+
+    def translate_candidate(self, candidate_id: int, target: str = "ar") -> None:
+        """
+        يترجم بيانات المرشح إلى اللغة المطلوبة ويخزّنها في عمود translations
+        بجانب الأصل (الأصل لا يُلمس أبداً). يرفع AIServiceError عند الفشل.
+        """
+        if target not in _TARGET_LANGUAGE_NAMES:
+            raise ValidationError(f"لغة الترجمة غير مدعومة: {target}")
+
+        candidate = self._get_or_raise(candidate_id)
+
+        payload: dict = {}
+        for name in _TRANSLATABLE_FIELDS:
+            value = getattr(candidate, name)
+            if name == "previous_positions" and not value:
+                value = self._positions_from_experience(candidate.experience)
+            if value:
+                payload[name] = value
+        if not payload:
+            raise ValidationError("لا توجد بيانات لترجمتها.")
+
+        from ai.gemini_service import GeminiService
+
+        translated = GeminiService().translate_json(payload, _TARGET_LANGUAGE_NAMES[target])
+        cleaned = self._clean_translation(payload, translated)
+        if not cleaned:
+            raise AIServiceError("لم تُرجع الترجمة بياناتٍ صالحة.")
+
+        translations = dict(candidate.translations or {})
+        translations[target] = cleaned
+        candidate.translations = translations  # إعادة إسناد ضرورية لاكتشاف تغيّر عمود JSON
+
+    @staticmethod
+    def _positions_from_experience(experience: list[dict] | None) -> list[str]:
+        positions: list[str] = []
+        seen: set[str] = set()
+        for item in experience or []:
+            value = (item.get("position") or "").strip()
+            if value and value.lower() not in seen:
+                seen.add(value.lower())
+                positions.append(value)
+        return positions
+
+    @staticmethod
+    def _clean_translation(original: dict, translated: dict) -> dict:
+        """يقبل من ناتج الترجمة فقط ما يطابق بنية الأصل (نفس النوع وعدد العناصر)، ويعيد الحقول غير المترجمة."""
+        cleaned: dict = {}
+        for key, orig in original.items():
+            new = translated.get(key)
+            if new in (None, "", []):
+                continue
+            if isinstance(orig, list):
+                if not isinstance(new, list) or len(new) != len(orig):
+                    continue
+                if orig and isinstance(orig[0], dict):
+                    if not all(isinstance(n, dict) for n in new):
+                        continue
+                    merged_items = []
+                    for o, n in zip(orig, new):
+                        merged = dict(o)
+                        for k, v in n.items():
+                            if k in o and k not in _NON_TRANSLATED_KEYS:
+                                merged[k] = v
+                        merged_items.append(merged)
+                    cleaned[key] = merged_items
+                    continue
+            elif not isinstance(new, str):
+                continue
+            cleaned[key] = new
+        return cleaned
+
     # ---------------------------------------------------------- CRUD والبحث
 
     def _get_or_raise(self, candidate_id: int) -> Candidate:
@@ -198,7 +298,7 @@ class CandidateService:
         return self._candidates.get_by_id(candidate_id)
 
     def update_candidate(self, candidate_id: int, **fields) -> Candidate:
-        """تعديل بيانات مرشح موجود (الحقول المسموحة فقط)."""
+        """تعديل بيانات مرشح موجود (الحقول المسموحة فقط). تُمسح الترجمة القديمة إن تغيّر محتوى مترجَم."""
         candidate = self._get_or_raise(candidate_id)
 
         unknown = set(fields) - _EDITABLE_FIELDS
@@ -207,16 +307,25 @@ class CandidateService:
         if "full_name" in fields and not (fields["full_name"] or "").strip():
             raise ValidationError("الاسم الكامل مطلوب.")
 
+        content_changed = any(
+            name in _TRANSLATABLE_FIELDS and (getattr(candidate, name) or None) != (value or None)
+            for name, value in fields.items()
+        )
+
         for name, value in fields.items():
             setattr(candidate, name, value)
+        if content_changed and candidate.translations:
+            candidate.translations = {}  # الترجمة القديمة لم تعد مطابقة للأصل
         return candidate
 
     def create_manual(self, **fields) -> Candidate:
         """إنشاء مرشح يدوياً (بدون رفع ملف) - تُستخدم من نموذج إدخال يدوي في الواجهة."""
         if not fields.get("full_name"):
             raise ValidationError("الاسم الكامل مطلوب.")
+        fields.setdefault("status", "New")
         candidate = Candidate(**fields)
         self._candidates.add(candidate)
+        self._assign_code(candidate)
         return candidate
 
     def list_all(self, limit: int = 200) -> list[Candidate]:

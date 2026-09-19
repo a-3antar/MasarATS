@@ -22,3 +22,5 @@ PHOTO_MIN_SIDE_PX: int = 100          # أصغر بُعد مقبول (يستبع
 PHOTO_MAX_ASPECT_RATIO: float = 1.6   # أقصى نسبة بين الطول والعرض (يستبعد الشعارات والشرائط العريضة)
 PHOTO_SEARCH_MAX_PAGES: int = 2       # نبحث عن الصورة في أول صفحتين فقط
 PHOTO_MAX_SIDE_PX: int = 600          # تصغير الصورة المحفوظة لتوفير المساحة
+
+CANDIDATE_STATUSES: list[str] = ["New", "Screened", "Interview", "Offered", "Rejected"]

@@ -24,23 +24,34 @@ def _education_text(items: list[dict] | None) -> str:
             lines.append(line)
     return "; ".join(lines) if lines else "-"
 
-
 def _to_row(c: Candidate) -> dict:
     years = c.total_experience_years
     return {
+        "الكود": c.candidate_code or "-",
         "الاسم": c.full_name,
         "البريد": c.email or "-",
         "الهاتف": c.phone or "-",
+        "LinkedIn": c.linkedin_url or "-",
         "الموقع": c.location or "-",
         "المسمى الحالي": c.current_position or "-",
+        "الوظيفة المستهدفة": c.applied_job or "-",
+        "الحالة": c.status or "New",
+        "التقييم": c.rating or "-",
         "الخبرة (سنة)": f"{years:g}" if years is not None else "-",
+        "الراتب المتوقع": f"{c.expected_salary:,.0f}" if c.expected_salary else "-",
+        "فترة الإشعار (يوم)": c.notice_period_days or "-",
+        "الحالة الاجتماعية": c.marital_status or "-",
+        "موقف التجنيد": c.military_status or "-",
+        "اللغات": _join(c.languages),
         "التعليم": _education_text(c.education),
         "المهارات الفنية": _join(c.technical_skills, _MAX_SKILLS_IN_TABLE),
         "مهارات الكمبيوتر": _join(c.computer_skills, _MAX_SKILLS_IN_TABLE),
         "المهارات الإدارية": _join(c.managerial_skills, _MAX_SKILLS_IN_TABLE),
         "المهارات الشخصية": _join(c.soft_skills, _MAX_SKILLS_IN_TABLE),
+        "المسميات السابقة": _join(c.previous_positions),
         "مجالات العمل السابقة": _join(c.industries),
         "الشركات السابقة": _join(c.previous_companies),
+        "ملاحظات": c.recruiter_notes or "-",
         "مصدر الملف": c.source_filename or "إدخال يدوي",
     }
 

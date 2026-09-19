@@ -56,15 +56,22 @@ class CandidateProfile(BaseModel):
     """الشكل المهيكل الذي نطلبه من الذكاء الاصطناعي بعد قراءة نص السيرة الذاتية.
 
     قاعدة أساسية: لا تخمين. أي حقل غير موجود بوضوح في النص يجب أن يكون null
-    أو قائمة فارغة، وليس قيمة مُستنتَجة.
+    أو قائمة فارغة، وليس قيمة مُستنتَجة. (الاستثناء الوحيد: المهارات الشخصية تُستخلص
+    من المسؤوليات المذكورة صراحة.)
     """
 
     full_name: str | None = None
     email: str | None = None
     phone: str | None = None
+    linkedin_url: str | None = None
     location: str | None = None
     current_position: str | None = None
     total_experience_years: float | None = None
+
+    # الحالة الشخصية
+    marital_status: str | None = None
+    military_status: str | None = None
+    languages: list[str] = Field(default_factory=list)
 
     # المهارات مقسّمة حسب النوع - وحقل skills للمهارات التي لا تنتمي لأي فئة
     technical_skills: list[str] = Field(default_factory=list)
@@ -85,9 +92,10 @@ class CandidateProfile(BaseModel):
 
     @field_validator(
         "skills", "technical_skills", "computer_skills",
-        "managerial_skills", "soft_skills", "industries",
+        "managerial_skills", "soft_skills", "industries", "languages",
         mode="before",
     )
     @classmethod
     def _normalize_str_list_fields(cls, value: Any) -> Any:
         return _coerce_to_str_list(value)
+    
