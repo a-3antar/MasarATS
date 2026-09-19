@@ -55,7 +55,7 @@ class RuleBasedMatchingEngine(MatchingEngine):
     @staticmethod
     def _score_skills(candidate: Candidate, job: Job) -> tuple[float, list[str], list[str]]:
         required = [_normalize(s) for s in (job.required_skills or [])]
-        candidate_skills = {_normalize(s) for s in (candidate.skills or [])}
+        candidate_skills = {_normalize(s) for s in candidate.all_skills}
 
         if not required:
             return 100.0, [], []

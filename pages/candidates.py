@@ -1,43 +1,43 @@
-"""صفحة عرض وبحث المرشحين."""
+"""صفحة عرض وبحث المرشحين، مع فتح بطاقة المرشح الموحّدة عند اختيار صف."""
 
 import pandas as pd
 import streamlit as st
 
 from database.database import get_db_session
+from models.candidate import Candidate
+from pages import candidate_profile
 from services.candidate_service import CandidateService
 
+_MAX_SKILLS_IN_TABLE = 5
 
-def render() -> None:
-    st.header("👥 المرشحون")
 
-    query = st.text_input("بحث بالاسم / البريد / المسمى الوظيفي", "")
+def _join(items: list[str] | None, limit: int | None = None) -> str:
+    items = items or []
+    return ", ".join(items[:limit]) if items else "-"
 
-    with get_db_session() as session:
-        candidates = CandidateService(session).search(query)
 
-        if not candidates:
-            st.info("لا يوجد مرشحون بعد. ابدأ برفع سيرة ذاتية من صفحة «رفع سيرة ذاتية».")
-            return
+def _to_row(c: Candidate) -> dict:
+    years = c.total_experience_years
+    return {
+        "الاسم": c.full_name,
+        "البريد": c.email or "-",
+        "الهاتف": c.phone or "-",
+        "المسمى الحالي": c.current_position or "-",
+        "الخبرة (سنة)": f"{years:g}" if years is not None else "-",
+        "المهارات الفنية": _join(c.technical_skills, _MAX_SKILLS_IN_TABLE),
+        "مهارات الكمبيوتر": _join(c.computer_skills, _MAX_SKILLS_IN_TABLE),
+        "المهارات الإدارية": _join(c.managerial_skills, _MAX_SKILLS_IN_TABLE),
+        "المهارات الشخصية": _join(c.soft_skills, _MAX_SKILLS_IN_TABLE),
+        "مجالات العمل السابقة": _join(c.industries),
+        "الشركات السابقة": _join(c.previous_companies),
+        "مصدر الملف": c.source_filename or "إدخال يدوي",
+    }
 
-        rows = [
-            {
-                "الاسم": c.full_name.title(),
-                "البريد": c.email or "-",
-                "الهاتف": c.phone or "-",
-                "المسمى الحالي": c.current_position or "-",
-                "الخبرة (سنة)": c.total_experience_years or "-",
-                "المهارات": ", ".join(c.skills[:5]) if c.skills else "-",
-                "مصدر الملف": c.source_filename or "إدخال يدوي",
-            }
-            for c in candidates
-        ]
 
-    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
-    st.caption(f"إجمالي النتائج: {len(rows)}")
-
+def _render_manual_form() -> None:
     with st.expander("➕ إضافة مرشح يدوياً"):
         with st.form("manual_candidate_form"):
-            full_name = st.text_input("الاسم الكامل *").title()
+            full_name = st.text_input("الاسم الكامل *")
             email = st.text_input("البريد الإلكتروني")
             phone = st.text_input("الهاتف")
             current_position = st.text_input("المسمى الوظيفي الحالي")
@@ -56,7 +56,39 @@ def render() -> None:
                         total_experience_years=experience or None,
                         skills=[s.strip() for s in skills_raw.split(",") if s.strip()],
                     )
-                st.success("تمت إضافة المرشح.")
+                st.success("تمت إضافة المرشح. يمكنك تصنيف مهاراته من بطاقته > تعديل.")
                 st.rerun()
             except Exception as exc:  # noqa: BLE001 - عرض أي خطأ تحقق للمستخدم مباشرة
                 st.error(str(exc))
+
+
+def render() -> None:
+    st.header("👥 المرشحون")
+
+    _render_manual_form()
+
+    query = st.text_input("بحث بالاسم / البريد / المسمى الوظيفي", "")
+
+    with get_db_session() as session:
+        candidates = CandidateService(session).search(query)
+        candidate_ids = [c.id for c in candidates]
+        rows = [_to_row(c) for c in candidates]
+
+    if not rows:
+        st.info("لا يوجد مرشحون بعد. ابدأ برفع سيرة ذاتية من صفحة «رفع سيرة ذاتية».")
+        return
+
+    event = st.dataframe(
+        pd.DataFrame(rows),
+        width='stretch',
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="candidates_table",
+    )
+    st.caption(f"إجمالي النتائج: {len(rows)} — اضغط على أي صف لعرض بطاقة المرشح الكاملة.")
+
+    selected_rows = event.selection.rows
+    if selected_rows and selected_rows[0] < len(candidate_ids):
+        st.divider()
+        candidate_profile.render_profile(candidate_ids[selected_rows[0]])

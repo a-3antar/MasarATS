@@ -1,18 +1,25 @@
 """
 خدمة المرشحين.
 تُدير سير عمل رفع السيرة الذاتية بالكامل:
-ملف → استخلاص نص → (AI أو استخلاص احتياطي بسيط) → تحقق Pydantic → حفظ في القاعدة.
+ملف → استخلاص نص وصورة → (AI أو استخلاص احتياطي بسيط) → تحقق Pydantic → حفظ في القاعدة.
 """
 
 import hashlib
+import io
+import uuid
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from ai.fallback_extractor import extract_basic_profile
-from ai.schemas import CandidateProfile
-from config.settings import get_settings
-from core.constants import ALLOWED_CV_EXTENSIONS, MAX_CV_FILE_SIZE_MB
+from ai.schemas import CandidateProfile, ExperienceItem
+from config.settings import BASE_DIR, get_settings
+from core.constants import (
+    ALLOWED_CV_EXTENSIONS,
+    MAX_CV_FILE_SIZE_MB,
+    PHOTO_MAX_SIDE_PX,
+    PHOTOS_SUBDIR,
+)
 from core.exceptions import AIServiceError, DuplicateCandidateError, ValidationError
 from core.logging import get_logger
 from document_processing.factory import DocumentParserFactory
@@ -20,6 +27,15 @@ from models.candidate import Candidate
 from repositories.candidate_repository import CandidateRepository
 
 logger = get_logger(__name__)
+
+PHOTOS_DIR = BASE_DIR / PHOTOS_SUBDIR
+
+# الحقول المسموح تعديلها من الواجهة (قائمة بيضاء لمنع تعديل حقول داخلية مثل file_hash)
+_EDITABLE_FIELDS = {
+    "full_name", "email", "phone", "location", "current_position", "total_experience_years",
+    "summary", "skills", "technical_skills", "computer_skills", "managerial_skills",
+    "soft_skills", "industries", "previous_companies",
+}
 
 
 class CandidateService:
@@ -47,6 +63,7 @@ class CandidateService:
 
         parser = DocumentParserFactory.get_parser(file_path)
         raw_text = parser.extract_text(file_path)
+        photo = parser.extract_photo(file_path)
 
         profile = self._extract_profile(raw_text, fallback_name=Path(original_filename).stem)
 
@@ -55,9 +72,16 @@ class CandidateService:
             email=profile.email,
             phone=profile.phone,
             location=profile.location,
+            photo_path=self._save_photo(photo[0], file_hash[:16]) if photo else None,
             current_position=profile.current_position,
             total_experience_years=profile.total_experience_years,
             skills=profile.skills,
+            technical_skills=profile.technical_skills,
+            computer_skills=profile.computer_skills,
+            managerial_skills=profile.managerial_skills,
+            soft_skills=profile.soft_skills,
+            industries=profile.industries,
+            previous_companies=self._unique_companies(profile.experience),
             education=[e.model_dump() for e in profile.education],
             experience=[e.model_dump() for e in profile.experience],
             summary=profile.summary,
@@ -87,6 +111,18 @@ class CandidateService:
             return extract_basic_profile(raw_text, fallback_name)
 
     @staticmethod
+    def _unique_companies(experience: list[ExperienceItem]) -> list[str]:
+        """أسماء الشركات السابقة من قائمة الخبرات (بنفس الترتيب وبدون تكرار)."""
+        companies: list[str] = []
+        seen: set[str] = set()
+        for item in experience:
+            name = (item.company or "").strip()
+            if name and name.lower() not in seen:
+                seen.add(name.lower())
+                companies.append(name)
+        return companies
+
+    @staticmethod
     def _ai_available() -> bool:
         return bool(get_settings().gemini_api_key)
 
@@ -94,6 +130,86 @@ class CandidateService:
     def _compute_file_hash(file_path: str) -> str:
         with open(file_path, "rb") as f:
             return hashlib.sha256(f.read()).hexdigest()
+
+    # ------------------------------------------------------------------ الصور
+
+    @staticmethod
+    def _save_photo(image_bytes: bytes, name_stem: str) -> str | None:
+        """
+        يحفظ الصورة بصيغة JPEG موحّدة ومصغّرة، ويرجع المسار النسبي لجذر المشروع.
+        يرجع None عند الفشل (صيغة غير مقروءة مثلاً) ولا يرفع استثناء.
+        """
+        try:
+            from PIL import Image
+
+            with Image.open(io.BytesIO(image_bytes)) as source:
+                if source.mode in ("RGBA", "LA", "P"):
+                    rgba = source.convert("RGBA")
+                    image = Image.new("RGB", rgba.size, "white")  # خلفية بيضاء بدل الأسود للشفافية
+                    image.paste(rgba, mask=rgba.split()[-1])
+                else:
+                    image = source.convert("RGB")
+
+            image.thumbnail((PHOTO_MAX_SIDE_PX, PHOTO_MAX_SIDE_PX))
+            PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
+            target = PHOTOS_DIR / f"{name_stem}.jpg"
+            image.save(target, format="JPEG", quality=90)
+            return target.relative_to(BASE_DIR).as_posix()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to save candidate photo: %s", exc)
+            return None
+
+    @staticmethod
+    def _delete_photo_file(relative_path: str | None) -> None:
+        if relative_path:
+            (BASE_DIR / relative_path).unlink(missing_ok=True)
+
+    @staticmethod
+    def photo_absolute_path(candidate: Candidate) -> Path | None:
+        """المسار الكامل لصورة المرشح إن كانت موجودة فعلاً على القرص."""
+        if not candidate.photo_path:
+            return None
+        path = BASE_DIR / candidate.photo_path
+        return path if path.exists() else None
+
+    def set_photo(self, candidate_id: int, image_bytes: bytes) -> None:
+        """استبدال صورة المرشح بصورة مرفوعة يدوياً."""
+        candidate = self._get_or_raise(candidate_id)
+        new_path = self._save_photo(image_bytes, f"candidate_{candidate_id}_{uuid.uuid4().hex[:8]}")
+        if new_path is None:
+            raise ValidationError("تعذّر قراءة الصورة. استخدم ملف PNG أو JPG صالحاً.")
+        self._delete_photo_file(candidate.photo_path)
+        candidate.photo_path = new_path
+
+    def remove_photo(self, candidate_id: int) -> None:
+        candidate = self._get_or_raise(candidate_id)
+        self._delete_photo_file(candidate.photo_path)
+        candidate.photo_path = None
+
+    # ---------------------------------------------------------- CRUD والبحث
+
+    def _get_or_raise(self, candidate_id: int) -> Candidate:
+        candidate = self._candidates.get_by_id(candidate_id)
+        if candidate is None:
+            raise ValidationError("المرشح غير موجود.")
+        return candidate
+
+    def get_by_id(self, candidate_id: int) -> Candidate | None:
+        return self._candidates.get_by_id(candidate_id)
+
+    def update_candidate(self, candidate_id: int, **fields) -> Candidate:
+        """تعديل بيانات مرشح موجود (الحقول المسموحة فقط)."""
+        candidate = self._get_or_raise(candidate_id)
+
+        unknown = set(fields) - _EDITABLE_FIELDS
+        if unknown:
+            raise ValidationError(f"حقول غير قابلة للتعديل: {', '.join(sorted(unknown))}")
+        if "full_name" in fields and not (fields["full_name"] or "").strip():
+            raise ValidationError("الاسم الكامل مطلوب.")
+
+        for name, value in fields.items():
+            setattr(candidate, name, value)
+        return candidate
 
     def create_manual(self, **fields) -> Candidate:
         """إنشاء مرشح يدوياً (بدون رفع ملف) - تُستخدم من نموذج إدخال يدوي في الواجهة."""

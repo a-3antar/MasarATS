@@ -24,17 +24,25 @@ class Candidate(Base):
     email: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     location: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    photo_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # مسار نسبي لجذر المشروع
 
     # معلومات مهنية
     current_position: Mapped[str | None] = mapped_column(String(150), nullable=True)
     total_experience_years: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    # قوائم مرنة (skills, education, experience...) نخزّنها JSON في هذه المرحلة
-    # لتفادي جداول فرعية معقدة قبل استقرار المتطلبات. يمكن تطبيعها (normalize)
-    # إلى جداول منفصلة لاحقاً دون كسر بقية الطبقات (الـ repository يعزل هذا التفصيل).
+    # قوائم مرنة نخزّنها JSON في هذه المرحلة لتفادي جداول فرعية معقدة قبل استقرار المتطلبات.
+    # skills = "مهارات أخرى" لا تنتمي لأي فئة من الفئات المفصّلة أدناه.
     skills: Mapped[list] = mapped_column(JSON, default=list)
     education: Mapped[list] = mapped_column(JSON, default=list)
     experience: Mapped[list] = mapped_column(JSON, default=list)
+
+    # فئات المهارات - nullable=True لأنها أُضيفت لاحقاً (السجلات القديمة ستحمل NULL)
+    technical_skills: Mapped[list] = mapped_column(JSON, default=list, nullable=True)
+    computer_skills: Mapped[list] = mapped_column(JSON, default=list, nullable=True)
+    managerial_skills: Mapped[list] = mapped_column(JSON, default=list, nullable=True)
+    soft_skills: Mapped[list] = mapped_column(JSON, default=list, nullable=True)
+    industries: Mapped[list] = mapped_column(JSON, default=list, nullable=True)
+    previous_companies: Mapped[list] = mapped_column(JSON, default=list, nullable=True)
 
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -47,6 +55,23 @@ class Candidate(Base):
     ai_analyzed: Mapped[bool] = mapped_column(default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    @property
+    def all_skills(self) -> list[str]:
+        """كل المهارات من كل الفئات في قائمة واحدة بدون تكرار (تستخدمها المطابقة)."""
+        groups = (
+            self.technical_skills, self.computer_skills, self.managerial_skills,
+            self.soft_skills, self.skills,
+        )
+        merged: list[str] = []
+        seen: set[str] = set()
+        for group in groups:
+            for skill in group or []:
+                key = skill.strip().lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    merged.append(skill)
+        return merged
 
     def __repr__(self) -> str:
         return f"<Candidate id={self.id} name={self.full_name!r}>"

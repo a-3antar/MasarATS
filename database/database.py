@@ -7,7 +7,7 @@
 from contextlib import contextmanager
 from typing import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from config.settings import get_settings
@@ -35,16 +35,34 @@ engine = _build_engine()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
+def _add_missing_columns() -> None:
+    """
+    يضيف أي أعمدة جديدة في النماذج لجداول موجودة مسبقاً في القاعدة.
+    ضروري لأن create_all() ينشئ الجداول الناقصة فقط ولا يعدّل الجداول القائمة.
+    """
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        for table in Base.metadata.sorted_tables:
+            existing = {col["name"] for col in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing:
+                    continue
+                column_type = column.type.compile(dialect=engine.dialect)
+                connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {column.name} {column_type}"))
+                logger.info("Added missing column %s.%s", table.name, column.name)
+
+
 def init_db() -> None:
-    """إنشاء كل الجداول المعرّفة إن لم تكن موجودة. تُستدعى عند بدء التطبيق."""
+    """إنشاء كل الجداول المعرّفة إن لم تكن موجودة + إضافة الأعمدة الناقصة. تُستدعى عند بدء التطبيق."""
     # استيراد النماذج هنا (وليس أعلى الملف) لتفادي circular imports،
     # لأن كل نموذج يحتاج Base من هذا الملف.
     from models import application, candidate, job, user  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _add_missing_columns()
     logger.info("Database initialized (tables ensured).")
 
-
+    
 @contextmanager
 def get_db_session() -> Generator[Session, None, None]:
     """
