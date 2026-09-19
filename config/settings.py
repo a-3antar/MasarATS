@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite:///{BASE_DIR / 'data' / 'smartats.db'}"
 
     # الذكاء الاصطناعي (سيُستخدم في مرحلة لاحقة)
-    gemini_api_key: str = "AQ.Ab8RN6KzDM6PDTMn7mW3cKx1_6RIMwey8BZ8dRlqWSIENGXbgA"
+    gemini_api_key: str = ""
     ai_model: str = "gemini-flash-lite-latest"
     ai_temperature: float = 0.2
 

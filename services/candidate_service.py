@@ -25,7 +25,7 @@ from core.logging import get_logger
 from document_processing.factory import DocumentParserFactory
 from models.candidate import Candidate
 from repositories.candidate_repository import CandidateRepository
-
+from services.experience_calculator import estimate_total_years
 logger = get_logger(__name__)
 
 PHOTOS_DIR = BASE_DIR / PHOTOS_SUBDIR
@@ -74,7 +74,7 @@ class CandidateService:
             location=profile.location,
             photo_path=self._save_photo(photo[0], file_hash[:16]) if photo else None,
             current_position=profile.current_position,
-            total_experience_years=profile.total_experience_years,
+            total_experience_years=estimate_total_years(profile.experience) or profile.total_experience_years,
             skills=profile.skills,
             technical_skills=profile.technical_skills,
             computer_skills=profile.computer_skills,

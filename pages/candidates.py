@@ -8,12 +8,21 @@ from models.candidate import Candidate
 from pages import candidate_profile
 from services.candidate_service import CandidateService
 
-_MAX_SKILLS_IN_TABLE = 5
+_MAX_SKILLS_IN_TABLE = None  # الحد الأقصى لعدد المهارات التي سيتم عرضها في الجدول، أو None لعرض جميع المهارات
 
 
 def _join(items: list[str] | None, limit: int | None = None) -> str:
     items = items or []
     return ", ".join(items[:limit]) if items else "-"
+
+
+def _education_text(items: list[dict] | None) -> str:
+    lines = []
+    for e in items or []:
+        line = " — ".join(p for p in (e.get("degree"), e.get("major"), e.get("institution")) if p)
+        if line:
+            lines.append(line)
+    return "; ".join(lines) if lines else "-"
 
 
 def _to_row(c: Candidate) -> dict:
@@ -22,8 +31,10 @@ def _to_row(c: Candidate) -> dict:
         "الاسم": c.full_name,
         "البريد": c.email or "-",
         "الهاتف": c.phone or "-",
+        "الموقع": c.location or "-",
         "المسمى الحالي": c.current_position or "-",
         "الخبرة (سنة)": f"{years:g}" if years is not None else "-",
+        "التعليم": _education_text(c.education),
         "المهارات الفنية": _join(c.technical_skills, _MAX_SKILLS_IN_TABLE),
         "مهارات الكمبيوتر": _join(c.computer_skills, _MAX_SKILLS_IN_TABLE),
         "المهارات الإدارية": _join(c.managerial_skills, _MAX_SKILLS_IN_TABLE),
@@ -32,7 +43,6 @@ def _to_row(c: Candidate) -> dict:
         "الشركات السابقة": _join(c.previous_companies),
         "مصدر الملف": c.source_filename or "إدخال يدوي",
     }
-
 
 def _render_manual_form() -> None:
     with st.expander("➕ إضافة مرشح يدوياً"):
