@@ -60,6 +60,10 @@ class JobService:
     def list_all(self) -> list[Job]:
         return self._jobs.list_all(limit=200)
 
+    def search(self, query: str) -> list[Job]:
+        query = (query or "").strip()
+        return self._jobs.search(query) if query else self.list_all()
+
     def list_open(self) -> list[Job]:
         return self._jobs.list_open()
 

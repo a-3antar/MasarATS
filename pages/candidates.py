@@ -7,6 +7,7 @@ from database.database import get_db_session
 from models.candidate import Candidate
 from pages import candidate_profile
 from services.candidate_service import CandidateService
+from services.export_service import ExportService
 
 _MAX_SKILLS_IN_TABLE = None  # الحد الأقصى لعدد المهارات التي سيتم عرضها في الجدول، أو None لعرض جميع المهارات
 
@@ -85,7 +86,6 @@ def _render_manual_form() -> None:
             except Exception as exc:  # noqa: BLE001 - عرض أي خطأ تحقق للمستخدم مباشرة
                 st.error(str(exc))
 
-
 def render() -> None:
     st.header("👥 المرشحون")
 
@@ -97,10 +97,25 @@ def render() -> None:
         candidates = CandidateService(session).search(query)
         candidate_ids = [c.id for c in candidates]
         rows = [_to_row(c) for c in candidates]
+        export_df = ExportService.candidates_to_dataframe(candidates)
 
     if not rows:
         st.info("لا يوجد مرشحون بعد. ابدأ برفع سيرة ذاتية من صفحة «رفع سيرة ذاتية».")
         return
+
+    csv_col, xlsx_col, _ = st.columns([1, 1, 4])
+    with csv_col:
+        st.download_button(
+            "⬇️ CSV", ExportService.to_csv_bytes(export_df),
+            file_name="candidates.csv", mime="text/csv", width="stretch",
+        )
+    with xlsx_col:
+        st.download_button(
+            "⬇️ Excel", ExportService.to_excel_bytes(export_df, "Candidates"),
+            file_name="candidates.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+        )
 
     event = st.dataframe(
         pd.DataFrame(rows),

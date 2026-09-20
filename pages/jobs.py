@@ -10,6 +10,8 @@ from core.exceptions import SmartATSError
 from database.database import get_db_session
 from models.job import Job
 from services.job_service import JobService
+from services.export_service import ExportService
+
 
 # نفس فئات مهارات المرشح حتى تكون المطابقة متناسقة
 _LIST_FIELDS: list[tuple[str, str]] = [
@@ -136,20 +138,36 @@ def _to_row(j: Job) -> dict:
         "الحالة": j.status,
     }
 
-
 def render() -> None:
     st.header("💼 الوظائف")
 
     _render_add_form()
 
+    query = st.text_input("بحث بالمسمى / القسم / الموقع", "", key="jobs_search")
+
     with get_db_session() as session:
-        jobs = JobService(session).list_all()
+        jobs = JobService(session).search(query)
         job_ids = [j.id for j in jobs]
         rows = [_to_row(j) for j in jobs]
+        export_df = ExportService.jobs_to_dataframe(jobs)
 
     if not rows:
-        st.info("لا توجد وظائف بعد.")
+        st.info("لا توجد وظائف مطابقة." if query else "لا توجد وظائف بعد.")
         return
+
+    csv_col, xlsx_col, _ = st.columns([1, 1, 4])
+    with csv_col:
+        st.download_button(
+            "⬇️ CSV", ExportService.to_csv_bytes(export_df),
+            file_name="jobs.csv", mime="text/csv", width="stretch",
+        )
+    with xlsx_col:
+        st.download_button(
+            "⬇️ Excel", ExportService.to_excel_bytes(export_df, "Jobs"),
+            file_name="jobs.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+        )
 
     event = st.dataframe(
         pd.DataFrame(rows),

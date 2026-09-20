@@ -11,6 +11,7 @@ from document_processing.base import DocumentParser
 from document_processing.pdf_parser import PDFParser
 from document_processing.text_parser import TextParser
 from document_processing.word_parser import WordParser
+from document_processing.pptx_parser import PowerPointParser
 
 
 class DocumentParserFactory:
@@ -20,6 +21,7 @@ class DocumentParserFactory:
         ".pdf": PDFParser,
         ".docx": WordParser,
         ".txt": TextParser,
+        ".pptx": PowerPointParser,
     }
 
     @classmethod

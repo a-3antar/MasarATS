@@ -1,6 +1,6 @@
 """ثوابت مشتركة عبر التطبيق - بدل نشر الأرقام والقيم الثابتة داخل الكود (no magic numbers)."""
 
-ALLOWED_CV_EXTENSIONS: set[str] = {".pdf", ".docx", ".txt"}
+ALLOWED_CV_EXTENSIONS: set[str] = {".pdf", ".docx", ".pptx", ".txt"}
 MAX_CV_FILE_SIZE_MB: int = 10
 
 # أوزان المطابقة الافتراضية (يمكن تعديلها لاحقاً لكل وظيفة على حدة)

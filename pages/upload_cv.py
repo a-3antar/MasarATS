@@ -48,11 +48,11 @@ def render() -> None:
         )
 
     uploaded_files = st.file_uploader(
-        "اختر ملف أو أكثر (PDF / DOCX / TXT)",
-        type=["pdf", "docx", "txt"],
+        "اختر ملف أو أكثر (PDF / DOCX / PPTX / TXT)",
+        type=["pdf", "docx", "pptx", "txt"],
         accept_multiple_files=True,
     )
-
+        
     if uploaded_files and st.button("بدء المعالجة", type="primary"):
         progress = st.progress(0.0, text="جاري المعالجة...")
         completed, errors = 0, 0
