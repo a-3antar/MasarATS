@@ -1,7 +1,7 @@
 """مخططات Pydantic لمخرجات استخلاص السيرة الذاتية. تُستخدم للتحقق من استجابة Gemini قبل حفظها."""
 
 from typing import Any
-
+import re
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -65,6 +65,7 @@ class CandidateProfile(BaseModel):
     phone: str | None = None
     linkedin_url: str | None = None
     location: str | None = None
+    age: int | None = None
     current_position: str | None = None
     total_experience_years: float | None = None
 
@@ -98,4 +99,16 @@ class CandidateProfile(BaseModel):
     @classmethod
     def _normalize_str_list_fields(cls, value: Any) -> Any:
         return _coerce_to_str_list(value)
-    
+
+    @field_validator("age", mode="before")
+    @classmethod
+    def _normalize_age(cls, value: Any) -> Any:
+        """يطبّع العمر إلى رقم صحيح، ويتجاهل القيم غير المنطقية بدل رفض الاستجابة كلها."""
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            age = int(value)
+        else:
+            match = re.search(r"\d{1,3}", str(value))
+            age = int(match.group(0)) if match else None
+        return age if age is not None and 15 <= age <= 80 else None

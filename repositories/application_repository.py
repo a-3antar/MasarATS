@@ -1,6 +1,6 @@
 """مستودع التقديمات: استعلامات خاصة بجدول applications."""
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from models.application import Application
@@ -24,3 +24,7 @@ class ApplicationRepository(BaseRepository[Application]):
             Application.candidate_id == candidate_id, Application.job_id == job_id
         )
         return self._session.scalars(stmt).first()
+
+    def delete_for_job(self, job_id: int) -> None:
+        """حذف كل التقديمات المرتبطة بوظيفة (قبل حذف الوظيفة نفسها)."""
+        self._session.execute(delete(Application).where(Application.job_id == job_id))

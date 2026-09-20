@@ -41,6 +41,11 @@ class RuleBasedMatchingEngine(MatchingEngine):
         if experience_score >= 80:
             strengths.append(f"✓ خبرة كافية ({candidate.total_experience_years or 0} سنة)")
 
+        wanted_industries = {_normalize(i) for i in (job.preferred_industries or [])}
+        for industry in candidate.industries or []:
+            if _normalize(industry) in wanted_industries:
+                strengths.append(f"✓ خبرة سابقة في المجال: {industry}")
+
         gaps = [f"⚠ مهارة غير موثّقة صراحة في السيرة الذاتية: {s}" for s in missing_skills]
         if experience_score < 50:
             gaps.append("⚠ الخبرة المذكورة أقل من المطلوب للوظيفة")
@@ -54,7 +59,7 @@ class RuleBasedMatchingEngine(MatchingEngine):
 
     @staticmethod
     def _score_skills(candidate: Candidate, job: Job) -> tuple[float, list[str], list[str]]:
-        required = [_normalize(s) for s in (job.required_skills or [])]
+        required = [_normalize(s) for s in job.all_required_skills]
         candidate_skills = {_normalize(s) for s in candidate.all_skills}
 
         if not required:

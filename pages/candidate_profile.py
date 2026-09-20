@@ -118,6 +118,8 @@ def _render_card(candidate: Candidate, photo_path, lang: str) -> None:
             st.write(f"🔗 {candidate.linkedin_url}")
         if candidate.total_experience_years is not None:
             st.write(f"⏳ الخبرة: {candidate.total_experience_years:g} سنة")
+        if candidate.age is not None:
+            st.write(f"🎂 العمر: {candidate.age} سنة")
 
     st.markdown("**🎯 بيانات التوظيف**")
     salary = f"{candidate.expected_salary:,.0f}" if candidate.expected_salary else "-"
@@ -187,6 +189,10 @@ def _render_edit_form(candidate: Candidate, photo_path) -> None:
         phone = st.text_input("الهاتف", value=candidate.phone or "", key=f"phone_{cid}")
         linkedin = st.text_input("رابط LinkedIn", value=candidate.linkedin_url or "", key=f"lin_{cid}")
         location = st.text_input("الموقع", value=candidate.location or "", key=f"loc_{cid}")
+        age = st.number_input(
+            "العمر", min_value=0, max_value=100, step=1,
+            value=int(candidate.age or 0), key=f"age_{cid}",
+        )        
         position = st.text_input("المسمى الوظيفي الحالي", value=candidate.current_position or "", key=f"pos_{cid}")
         experience = st.number_input(
             "سنوات الخبرة", min_value=0.0, step=0.5,
@@ -243,6 +249,7 @@ def _render_edit_form(candidate: Candidate, photo_path) -> None:
                 phone=phone.strip() or None,
                 linkedin_url=linkedin.strip() or None,
                 location=location.strip() or None,
+                age=int(age) or None,
                 current_position=position.strip() or None,
                 total_experience_years=experience or None,
                 marital_status=marital.strip() or None,

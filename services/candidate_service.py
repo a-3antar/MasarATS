@@ -35,7 +35,7 @@ PHOTOS_DIR = BASE_DIR / PHOTOS_SUBDIR
 
 # الحقول المسموح تعديلها من الواجهة (قائمة بيضاء لمنع تعديل حقول داخلية مثل file_hash)
 _EDITABLE_FIELDS = {
-    "full_name", "email", "phone", "location", "current_position", "total_experience_years",
+    "full_name", "email", "phone", "location", "age", "current_position", "total_experience_years",
     "summary", "skills", "technical_skills", "computer_skills", "managerial_skills",
     "soft_skills", "industries", "previous_companies", "previous_positions",
     "linkedin_url", "marital_status", "military_status", "languages",
@@ -89,6 +89,7 @@ class CandidateService:
             phone=profile.phone,
             linkedin_url=profile.linkedin_url,
             location=profile.location,
+            age=profile.age,
             photo_path=self._save_photo(photo[0], file_hash[:16]) if photo else None,
             marital_status=profile.marital_status,
             military_status=profile.military_status,

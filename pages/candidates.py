@@ -31,6 +31,7 @@ def _to_row(c: Candidate) -> dict:
         "الاسم": c.full_name,
         "البريد": c.email or "-",
         "الهاتف": c.phone or "-",
+        "العمر": str(c.age) if c.age is not None else "-",
         "LinkedIn": c.linkedin_url or "-",
         "الموقع": c.location or "-",
         "المسمى الحالي": c.current_position or "-",
@@ -61,6 +62,7 @@ def _render_manual_form() -> None:
             full_name = st.text_input("الاسم الكامل *")
             email = st.text_input("البريد الإلكتروني")
             phone = st.text_input("الهاتف")
+            age = st.number_input("العمر", min_value=0, max_value=100, step=1)
             current_position = st.text_input("المسمى الوظيفي الحالي")
             experience = st.number_input("سنوات الخبرة", min_value=0.0, step=0.5)
             skills_raw = st.text_input("المهارات (مفصولة بفاصلة)")
@@ -73,6 +75,7 @@ def _render_manual_form() -> None:
                         full_name=full_name,
                         email=email or None,
                         phone=phone or None,
+                        age=int(age) or None,
                         current_position=current_position or None,
                         total_experience_years=experience or None,
                         skills=[s.strip() for s in skills_raw.split(",") if s.strip()],
