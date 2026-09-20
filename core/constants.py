@@ -24,3 +24,13 @@ PHOTO_SEARCH_MAX_PAGES: int = 2       # نبحث عن الصورة في أول �
 PHOTO_MAX_SIDE_PX: int = 600          # تصغير الصورة المحفوظة لتوفير المساحة
 
 CANDIDATE_STATUSES: list[str] = ["New", "Screened", "Interview", "Offered", "Rejected"]
+
+# قراءة الصفحات الصورية عبر Gemini Vision
+OCR_DPI: int = 150                  # كافٍ للقراءة ويقلل حجم الصورة المرسلة
+OCR_MIN_CHARS_PER_PAGE: int = 30    # أقل من هذا العدد من الحروف → نعتبر الصفحة صورة
+OCR_MAX_PAGES: int = 5              # أقصى عدد صفحات تُرسل للقراءة لكل ملف (حماية من التكلفة)
+
+# استبعاد الصور التي هي في الحقيقة صفحة كاملة، واكتشاف الوجه كبديل
+PHOTO_MAX_PAGE_COVERAGE: float = 0.25  # صورة تغطي أكثر من هذه النسبة من مساحة الصفحة ليست صورة شخصية
+FACE_CROP_PADDING: float = 0.6         # هامش حول الوجه المكتشف (نسبة من عرض الوجه) ليظهر الرأس والكتفان
+FACE_MIN_SIZE_PX: int = 60             # أصغر وجه مقبول عند الاكتشاف

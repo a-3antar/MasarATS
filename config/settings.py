@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     # عام
     app_env: str = "development"
-    log_level: str = "INFO"
+    log_level: str = "DEBUG"
     secret_key: str = "dev-secret-change-me"
 
     # قاعدة البيانات
@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     ai_model: str = "gemini-flash-lite-latest"
     ai_temperature: float = 0.2
+
 
     @property
     def is_development(self) -> bool:
