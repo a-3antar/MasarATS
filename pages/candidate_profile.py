@@ -12,6 +12,7 @@ from services.candidate_service import CandidateService
 from services.job_service import JobService
 from services.matching_service import MatchingService
 
+
 # ترتيب الأقسام ثابت لكل المرشحين - هذا ما يوحّد شكل السير الذاتية
 _SKILL_SECTIONS: list[tuple[str, str]] = [
     ("🛠️ المهارات الفنية", "technical_skills"),
@@ -32,6 +33,7 @@ _LANG_OPTIONS = {"English": "en", "العربية": "ar"}
 _NOT_MENTIONED = "غير مذكور في السيرة الذاتية"
 
 _TOP_JOBS_COUNT = 5
+_MAX_SUITABLE_JOBS = 5
 
 
 def _tags(items: list[str]) -> str:
@@ -92,13 +94,50 @@ def render_profile(candidate_id: int) -> None:
                 st.error(str(exc))
         lang = "en"
 
-    tab_card, tab_jobs, tab_edit = st.tabs(["📋 بطاقة المرشح", "🎯 أفضل الوظائف", "✏️ تعديل"])
+    tab_card, tab_jobs, tab_edit = st.tabs(["📋 بطاقة المرشح", "🎯 الوظائف المناسبة", "✏️ تعديل"])
     with tab_card:
         _render_card(candidate, photo_path, lang)
     with tab_jobs:
-        _render_best_jobs(candidate_id)
+        _render_suitable_jobs(candidate_id)
     with tab_edit:
         _render_edit_form(candidate, photo_path)
+
+def _render_suitable_jobs(candidate_id: int) -> None:
+    """أفضل الوظائف لهذا المرشح مع شرح الدرجة (بدون expander لأن البطاقة قد تكون داخل expander)."""
+    open_only = st.checkbox("الوظائف المفتوحة فقط", value=True, key=f"jobs_open_only_{candidate_id}")
+
+    with get_db_session() as session:
+        candidate = CandidateService(session).get_by_id(candidate_id)
+        job_service = JobService(session)
+        jobs = job_service.list_open() if open_only else job_service.list_all()
+        if candidate is None or not jobs:
+            results: list[dict] = []
+        else:
+            results = MatchingService(session).rank_jobs_for_candidate(candidate, jobs)[:_MAX_SUITABLE_JOBS]
+
+    if not results:
+        st.info("لا توجد وظائف متاحة للمطابقة. أضف وظيفة من صفحة «الوظائف».")
+        return
+
+    for r in results:
+        job = r["job"]
+        with st.container(border=True):
+            col_info, col_score = st.columns([3, 1])
+            with col_info:
+                st.markdown(f"**{job.title}**")
+                st.caption(f"{job.department or 'بدون قسم'} · {job.location or 'بدون موقع'} · {job.status}")
+            with col_score:
+                st.metric("المطابقة", f"{r['score']}%")
+
+            b = r["breakdown"]
+            st.caption(
+                f"المهارات {b['skills']}% · الخبرة {b['experience']}% · "
+                f"الموقع {b['location']}% · التعليم {b['education']}%"
+            )
+            for line in r["strengths"]:
+                st.write(line)
+            for line in r["gaps"]:
+                st.write(line)
 
 def _render_best_jobs(candidate_id: int) -> None:
     """أفضل الوظائف المفتوحة لهذا المرشح مع تفسير الدرجة (للعرض فقط)."""

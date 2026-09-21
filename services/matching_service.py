@@ -56,3 +56,9 @@ class MatchingService:
         results = [{"job": job, **self._engine.calculate_match(candidate, job)} for job in jobs]
         results.sort(key=lambda r: r["score"], reverse=True)
         return results[:limit]
+
+    def rank_jobs_for_candidate(self, candidate: Candidate, jobs: list[Job]) -> list[dict]:
+        """يرتّب الوظائف حسب مطابقتها لمرشح واحد بدون حفظ أي شيء في القاعدة (للعرض فقط)."""
+        results = [{"job": job, **self._engine.calculate_match(candidate, job)} for job in jobs]
+        results.sort(key=lambda r: r["score"], reverse=True)
+        return results
