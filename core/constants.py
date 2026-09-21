@@ -34,3 +34,9 @@ OCR_MAX_PAGES: int = 5              # أقصى عدد صفحات تُرسل لل
 PHOTO_MAX_PAGE_COVERAGE: float = 0.25  # صورة تغطي أكثر من هذه النسبة من مساحة الصفحة ليست صورة شخصية
 FACE_CROP_PADDING: float = 0.6         # هامش حول الوجه المكتشف (نسبة من عرض الوجه) ليظهر الرأس والكتفان
 FACE_MIN_SIZE_PX: int = 60             # أصغر وجه مقبول عند الاكتشاف
+
+# كشف المرشحين المكررين
+DUPLICATE_NAME_SIMILARITY_THRESHOLD: float = 0.88  # أقل نسبة تشابه اسم تُعتبر تطابقاً ضعيفاً
+PHONE_MIN_DIGITS: int = 8                          # أقل من هذا لا يُعتبر رقماً صالحاً للمقارنة
+PHONE_MATCH_DIGITS: int = 10                       # نقارن آخر 10 أرقام (يتجاوز كود الدولة)
+DUPLICATE_SCAN_LIMIT: int = 100_000                # حد أمان لعدد المرشحين الممسوحين

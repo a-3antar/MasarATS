@@ -28,6 +28,7 @@ from document_processing.factory import DocumentParserFactory
 from models.candidate import Candidate
 from repositories.candidate_repository import CandidateRepository
 from services.experience_calculator import estimate_total_years
+from services.duplicate_detector import DuplicateDetector
 
 logger = get_logger(__name__)
 
@@ -58,11 +59,13 @@ class CandidateService:
     def __init__(self, session: Session) -> None:
         self._session = session
         self._candidates = CandidateRepository(session)
+        self._duplicates = DuplicateDetector(self._candidates)
 
     def process_cv_file(self, file_path: str, original_filename: str) -> Candidate:
         """
         السير الكامل لمعالجة ملف سيرة ذاتية واحد وحفظه كمرشح.
-        يرفع ValidationError لملف غير مدعوم، أو DuplicateCandidateError لملف مكرر.
+        يرفع ValidationError لملف غير مدعوم، أو DuplicateCandidateError لملف/مرشح مكرر.
+        تطابق الاسم فقط لا يمنع الحفظ، بل يوضع في candidate.duplicate_warning للعرض.
         """
         extension = Path(original_filename).suffix.lower()
         if extension not in ALLOWED_CV_EXTENSIONS:
@@ -79,12 +82,25 @@ class CandidateService:
 
         parser = DocumentParserFactory.get_parser(file_path)
         raw_text = parser.extract_text(file_path)
-        photo = parser.extract_photo(file_path)
 
         profile = self._extract_profile(raw_text, fallback_name=Path(original_filename).stem)
+        full_name = profile.full_name or Path(original_filename).stem
+
+        # كشف التكرار قبل استخراج الصورة (استخراجها قد يستدعي Gemini فلا نصرف عليه لمكرر)
+        matches = self._duplicates.find_duplicates(
+            full_name=full_name,
+            email=profile.email,
+            phone=profile.phone,
+            linkedin_url=profile.linkedin_url,
+        )
+        strong = next((m for m in matches if m.is_strong), None)
+        if strong is not None:
+            raise DuplicateCandidateError(f"مرشح مكرر: {strong.describe()}")
+
+        photo = parser.extract_photo(file_path)
 
         candidate = Candidate(
-            full_name=profile.full_name or Path(original_filename).stem,
+            full_name=full_name,
             email=profile.email,
             phone=profile.phone,
             linkedin_url=profile.linkedin_url,
@@ -115,6 +131,10 @@ class CandidateService:
         )
         self._candidates.add(candidate)
         self._assign_code(candidate)
+
+        # سمة مؤقتة (غير محفوظة في القاعدة) تقرؤها صفحة الرفع لعرض التنبيه
+        candidate.duplicate_warning = " | ".join(m.describe() for m in matches) or None
+
         logger.info("Candidate created from CV upload: %s (%s)", candidate.full_name, original_filename)
         return candidate
 

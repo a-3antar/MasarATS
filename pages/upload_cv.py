@@ -34,6 +34,8 @@ def _render_results() -> None:
     for item in results:
         label = f"👤 {item['name']}  —  📎 {item['filename']}"
         with st.expander(label, expanded=len(results) == 1):
+            if item.get("warning"):
+                st.warning(f"⚠️ قد يكون مكرراً: {item['warning']}")
             candidate_profile.render_profile(item["id"])
 
 
@@ -68,7 +70,8 @@ def render() -> None:
                 with get_db_session() as session:
                     candidate = CandidateService(session).process_cv_file(tmp_path, uploaded_file.name)
                 new_results.append(
-                    {"id": candidate.id, "name": candidate.full_name, "filename": uploaded_file.name}
+                    {"id": candidate.id, "name": candidate.full_name, "filename": uploaded_file.name,
+                     "warning": getattr(candidate, "duplicate_warning", None)}
                 )
                 completed += 1
             except DuplicateCandidateError as exc:
