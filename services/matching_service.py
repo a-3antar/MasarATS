@@ -50,3 +50,9 @@ class MatchingService:
             "gaps": result["gaps"],
         }
         return application
+
+    def top_jobs_for_candidate(self, candidate: Candidate, jobs: list[Job], limit: int = 5) -> list[dict]:
+        """أفضل الوظائف لمرشح واحد للعرض فقط (لا تحفظ سجلات application)."""
+        results = [{"job": job, **self._engine.calculate_match(candidate, job)} for job in jobs]
+        results.sort(key=lambda r: r["score"], reverse=True)
+        return results[:limit]

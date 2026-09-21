@@ -9,6 +9,8 @@ from core.exceptions import SmartATSError
 from database.database import get_db_session
 from models.candidate import Candidate
 from services.candidate_service import CandidateService
+from services.job_service import JobService
+from services.matching_service import MatchingService
 
 # ترتيب الأقسام ثابت لكل المرشحين - هذا ما يوحّد شكل السير الذاتية
 _SKILL_SECTIONS: list[tuple[str, str]] = [
@@ -28,6 +30,8 @@ _PHOTO_WIDTH_PX = 180
 _MAX_RESPONSIBILITIES_SHOWN = 6
 _LANG_OPTIONS = {"English": "en", "العربية": "ar"}
 _NOT_MENTIONED = "غير مذكور في السيرة الذاتية"
+
+_TOP_JOBS_COUNT = 5
 
 
 def _tags(items: list[str]) -> str:
@@ -62,7 +66,6 @@ def _value(candidate: Candidate, attr: str, lang: str):
         return _positions_from_experience(candidate)
     return value
 
-
 def render_profile(candidate_id: int) -> None:
     with get_db_session() as session:
         service = CandidateService(session)
@@ -89,12 +92,47 @@ def render_profile(candidate_id: int) -> None:
                 st.error(str(exc))
         lang = "en"
 
-    tab_card, tab_edit = st.tabs(["📋 بطاقة المرشح", "✏️ تعديل"])
+    tab_card, tab_jobs, tab_edit = st.tabs(["📋 بطاقة المرشح", "🎯 أفضل الوظائف", "✏️ تعديل"])
     with tab_card:
         _render_card(candidate, photo_path, lang)
+    with tab_jobs:
+        _render_best_jobs(candidate_id)
     with tab_edit:
         _render_edit_form(candidate, photo_path)
 
+def _render_best_jobs(candidate_id: int) -> None:
+    """أفضل الوظائف المفتوحة لهذا المرشح مع تفسير الدرجة (للعرض فقط)."""
+    with get_db_session() as session:
+        candidate = CandidateService(session).get_by_id(candidate_id)
+        jobs = JobService(session).list_open()
+        results = (
+            MatchingService(session).top_jobs_for_candidate(candidate, jobs, _TOP_JOBS_COUNT)
+            if candidate is not None and jobs
+            else []
+        )
+
+    if not jobs:
+        st.info("لا توجد وظائف مفتوحة حالياً. أضف وظيفة من صفحة «الوظائف».")
+        return
+
+    st.caption(f"أفضل {len(results)} وظيفة مفتوحة مطابقة لهذا المرشح (حسب القواعد الحالية، وللمراجعة البشرية فقط).")
+    for r in results:
+        job = r["job"]
+        with st.container(border=True):
+            col_info, col_score = st.columns([3, 1])
+            with col_info:
+                st.markdown(f"**{job.title}**")
+                st.caption(f"{job.department or 'بدون قسم'} · {job.location or 'بدون موقع'}")
+            with col_score:
+                st.metric("المطابقة", f"{r['score']}%")
+            with st.expander("تفاصيل الدرجة"):
+                b = r["breakdown"]
+                st.write(
+                    f"المهارات: {b['skills']}% · الخبرة: {b['experience']}% · "
+                    f"الموقع: {b['location']}% · التعليم: {b['education']}%"
+                )
+                for line in r["strengths"] + r["gaps"]:
+                    st.write(line)
 
 def _render_card(candidate: Candidate, photo_path, lang: str) -> None:
     col_photo, col_info = st.columns([1, 3])
