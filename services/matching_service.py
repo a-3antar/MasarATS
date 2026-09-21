@@ -15,13 +15,13 @@ class MatchingService:
         self._applications = ApplicationRepository(session)
         self._engine = RuleBasedMatchingEngine()
 
-    def match_all_candidates_to_job(self, job: Job, candidates: list[Candidate]) -> list[dict]:
-        """يحسب درجة المطابقة لكل مرشح مقابل وظيفة معينة، ويحفظها كسجل application، ويرجع النتائج مرتبة."""
+    def match_candidate_to_all_jobs(self, candidate: Candidate, jobs: list[Job]) -> list[dict]:
+        """يحسب درجة مطابقة مرشح واحد مقابل كل الوظائف المعطاة، ويحفظها كسجل application، ويرجع النتائج مرتبة."""
         results = []
-        for candidate in candidates:
+        for job in jobs:
             result = self._engine.calculate_match(candidate, job)
             self._save_or_update_application(candidate.id, job.id, result)
-            results.append({"candidate": candidate, **result})
+            results.append({"job": job, **result})
 
         results.sort(key=lambda r: r["score"], reverse=True)
         return results
