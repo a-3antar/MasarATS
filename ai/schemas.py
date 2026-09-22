@@ -127,4 +127,17 @@ class CandidateSearchFilters(BaseModel):
     @classmethod
     def _normalize_skills(cls, value: Any) -> Any:
         return _coerce_to_str_list(value)
-    
+
+class InterviewQuestion(BaseModel):
+    question: str
+    rationale: str | None = None  # سبب هذا السؤال (مرتبط بأي جزء من الوظيفة أو السيرة الذاتية)
+
+
+class InterviewQuestions(BaseModel):
+    """أسئلة مقابلة مبنية على وصف الوظيفة وسيرة المرشح الفعلية - لا تخترع إنجازات غير مذكورة."""
+
+    technical: list[InterviewQuestion] = Field(default_factory=list)
+    behavioral: list[InterviewQuestion] = Field(default_factory=list)
+    leadership: list[InterviewQuestion] = Field(default_factory=list)
+    cv_specific: list[InterviewQuestion] = Field(default_factory=list)
+    risk_areas: list[str] = Field(default_factory=list)  # نقاط غامضة أو تحتاج توضيحاً في السيرة 

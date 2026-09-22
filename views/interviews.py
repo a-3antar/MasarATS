@@ -1,4 +1,4 @@
-"""صفحة إدارة المقابلات: اختيار وظيفة ثم تقديم (مرشح) ثم جدولة/تعديل/حذف مقابلاته."""
+"""صفحة إدارة المقابلات: اختيار وظيفة ثم تقديم (مرشح) ثم جدولة/تعديل/حذف مقابلاته، مع توليد أسئلة بالذكاء الاصطناعي."""
 
 from datetime import datetime, timezone
 
@@ -13,7 +13,7 @@ from services.interview_service import InterviewService
 from services.job_service import JobService
 
 
-def _interview_form_fields(key: str, interview=None) -> dict:
+def _interview_form_fields(key: str, interview=None, default_questions: str | None = None) -> dict:
     col1, col2 = st.columns(2)
     with col1:
         itype = st.selectbox(
@@ -42,9 +42,8 @@ def _interview_form_fields(key: str, interview=None) -> dict:
             "المكان / رابط الاجتماع", value=(interview.location or "") if interview else "", key=f"{key}_location"
         )
 
-    questions = st.text_area(
-        "الأسئلة", value=(interview.questions or "") if interview else "", key=f"{key}_questions", height=100
-    )
+    questions_value = default_questions if default_questions is not None else ((interview.questions or "") if interview else "")
+    questions = st.text_area("الأسئلة", value=questions_value, key=f"{key}_questions", height=150)
     notes = st.text_area("ملاحظات", value=(interview.notes or "") if interview else "", key=f"{key}_notes")
     feedback = st.text_area(
         "التقييم النصي (Feedback)", value=(interview.feedback or "") if interview else "", key=f"{key}_feedback"
@@ -71,6 +70,26 @@ def _interview_form_fields(key: str, interview=None) -> dict:
         "evaluation": evaluation or None,
         "next_action": next_action.strip() or None,
     }
+
+
+def _render_ai_questions_summary(result) -> str:
+    """يحوّل نتيجة الذكاء الاصطناعي إلى نص واحد جاهز لحقل الأسئلة."""
+    lines: list[str] = []
+    sections = [
+        ("أسئلة خاصة بالسيرة الذاتية", result.cv_specific),
+        ("أسئلة تقنية", result.technical),
+        ("أسئلة سلوكية", result.behavioral),
+        ("أسئلة قيادية", result.leadership),
+    ]
+    for title, items in sections:
+        if items:
+            lines.append(f"{title}:")
+            lines.extend(f"- {q.question}" for q in items)
+            lines.append("")
+    if result.risk_areas:
+        lines.append("نقاط يجب التحقق منها:")
+        lines.extend(f"- {r}" for r in result.risk_areas)
+    return "\n".join(lines).strip()
 
 
 def _render_interview_card(interview) -> None:
@@ -103,15 +122,31 @@ def _render_interview_card(interview) -> None:
                 st.error(str(exc))
 
 
-def _render_add_interview(application_id: int) -> None:
+def _render_add_interview(application_id: int, candidate, job) -> None:
+    ai_key = f"ai_questions_{application_id}"
+
     with st.expander("➕ جدولة مقابلة جديدة"):
+        if st.button("🤖 توليد أسئلة مقابلة بالذكاء الاصطناعي", key=f"gen_ai_{application_id}"):
+            try:
+                from ai.interview_generator import generate_interview_questions
+
+                with st.spinner("جاري توليد الأسئلة..."):
+                    result = generate_interview_questions(candidate, job)
+                st.session_state[ai_key] = _render_ai_questions_summary(result)
+                st.rerun()
+            except SmartATSError as exc:
+                st.error(str(exc))
+
         with st.form(f"new_interview_{application_id}", clear_on_submit=True):
-            values = _interview_form_fields(f"new_{application_id}")
+            values = _interview_form_fields(
+                f"new_{application_id}", default_questions=st.session_state.get(ai_key)
+            )
             submitted = st.form_submit_button("حفظ المقابلة", type="primary")
         if submitted:
             try:
                 with get_db_session() as session:
                     InterviewService(session).schedule(application_id, **values)
+                st.session_state.pop(ai_key, None)
                 st.toast("تمت جدولة المقابلة ✅")
                 st.rerun()
             except SmartATSError as exc:
@@ -133,10 +168,11 @@ def render() -> None:
     job_id = job_labels[selected_job_label]
 
     with get_db_session() as session:
+        job = JobService(session).get_by_id(job_id)
         applications = ApplicationRepository(session).get_for_job(job_id)
         candidate_service = CandidateService(session)
         app_rows = [
-            (app.id, candidate.full_name, app.status, app.match_score)
+            (app.id, candidate, app.status, app.match_score)
             for app in applications
             if (candidate := candidate_service.get_by_id(app.candidate_id)) is not None
         ]
@@ -146,17 +182,17 @@ def render() -> None:
         return
 
     app_labels = {
-        (f"{name} · {status} · {score}%" if score is not None else f"{name} · {status}"): app_id
-        for app_id, name, status, score in app_rows
+        (f"{c.full_name} · {status} · {score}%" if score is not None else f"{c.full_name} · {status}"): (app_id, c)
+        for app_id, c, status, score in app_rows
     }
     selected_app_label = st.selectbox("اختر المرشح (التقديم)", list(app_labels.keys()), key="iv_app_select")
-    application_id = app_labels[selected_app_label]
+    application_id, candidate = app_labels[selected_app_label]
 
     with get_db_session() as session:
         interviews = InterviewService(session).list_for_application(application_id)
 
     st.divider()
-    _render_add_interview(application_id)
+    _render_add_interview(application_id, candidate, job)
 
     if interviews:
         st.subheader(f"المقابلات المجدولة ({len(interviews)})")
@@ -164,4 +200,3 @@ def render() -> None:
             _render_interview_card(interview)
     else:
         st.caption("لا توجد مقابلات مجدولة لهذا التقديم بعد.")
-

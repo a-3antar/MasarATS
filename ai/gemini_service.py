@@ -166,3 +166,32 @@ class GeminiService(AIProvider):
         except Exception as exc:
             logger.error("Gemini search parsing failed: %s | raw_response=%s", exc, raw_text[:1000])
             raise AIServiceError(f"فشل فهم طلب البحث: {exc}") from exc
+
+    def generate_interview_questions(self, job_text: str, candidate_text: str):
+        """يولّد أسئلة مقابلة مبنية على الوظيفة والمرشح. يرفع AIServiceError عند الفشل."""
+        from ai.prompts import INTERVIEW_QUESTIONS_PROMPT_TEMPLATE
+        from ai.schemas import InterviewQuestions
+
+        raw_text = ""
+        try:
+            model = self._genai.GenerativeModel(
+                model_name=self._settings.ai_model,
+                generation_config={
+                    "temperature": self._settings.ai_temperature,
+                    "response_mime_type": "application/json",
+                    "response_schema": _pydantic_to_gemini_schema(InterviewQuestions),
+                    "max_output_tokens": 4096,
+                },
+            )
+            prompt = INTERVIEW_QUESTIONS_PROMPT_TEMPLATE.format(
+                job_text=job_text[:4000], candidate_text=candidate_text[:8000]
+            )
+            response = model.generate_content(prompt)
+            raw_text = response.text
+            return InterviewQuestions.model_validate(json.loads(raw_text))
+        except ValidationError as exc:
+            logger.error("Interview questions failed validation: %s | raw_response=%s", exc, raw_text[:2000])
+            raise AIServiceError("استجابة الذكاء الاصطناعي لم تطابق الشكل المتوقع.") from exc
+        except Exception as exc:
+            logger.error("Gemini interview generation failed: %s | raw_response=%s", exc, raw_text[:2000])
+            raise AIServiceError(f"فشل توليد أسئلة المقابلة: {exc}") from exc
