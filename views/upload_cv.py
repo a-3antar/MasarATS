@@ -1,5 +1,6 @@
 """صفحة رفع السيرة الذاتية وإنشاء مرشح تلقائياً منها، مع عرض البيانات المستخرجة كبطاقات قابلة للتعديل."""
 
+import concurrent.futures
 import tempfile
 from pathlib import Path
 
@@ -13,6 +14,30 @@ from services.candidate_service import CandidateService
 
 # مفتاح حفظ نتائج الرفع في session_state حتى لا تختفي البطاقات عند أي rerun (مثل حفظ تعديل)
 _RESULTS_KEY = "upload_cv_results"
+
+# عدد الملفات المعالَجة بالتوازي. أكبر من هذا قد يضغط على حصة (quota) Gemini
+# أو يزيد تعارض الكتابة على SQLite بدل تسريع المعالجة.
+_MAX_WORKERS = 4
+
+
+def _process_one(tmp_path: str, filename: str) -> dict:
+    """يعالج ملفاً واحداً في جلسة قاعدة بيانات مستقلة. يعمل داخل Thread منفصل - لا ينادي أي دالة Streamlit."""
+    try:
+        with get_db_session() as session:
+            candidate = CandidateService(session).process_cv_file(tmp_path, filename)
+        return {
+            "ok": True,
+            "filename": filename,
+            "id": candidate.id,
+            "name": candidate.full_name,
+            "warning": getattr(candidate, "duplicate_warning", None),
+        }
+    except DuplicateCandidateError as exc:
+        return {"ok": False, "duplicate": True, "filename": filename, "message": str(exc)}
+    except (ValidationError, SmartATSError) as exc:
+        return {"ok": False, "duplicate": False, "filename": filename, "message": str(exc)}
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
 
 
 def _render_results() -> None:
@@ -54,35 +79,44 @@ def render() -> None:
         type=["pdf", "docx", "pptx", "txt"],
         accept_multiple_files=True,
     )
-        
-    if uploaded_files and st.button("بدء المعالجة", type="primary"):
-        progress = st.progress(0.0, text="جاري المعالجة...")
-        completed, errors = 0, 0
-        new_results: list[dict] = []
 
-        for i, uploaded_file in enumerate(uploaded_files, start=1):
+    if uploaded_files and st.button("بدء المعالجة", type="primary"):
+        # نكتب كل الملفات المؤقتة في الخيط الرئيسي أولاً (أسرع وأأمن من الكتابة داخل الـ threads)
+        tmp_jobs: list[tuple[str, str]] = []
+        for uploaded_file in uploaded_files:
             suffix = Path(uploaded_file.name).suffix
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 tmp.write(uploaded_file.getbuffer())
-                tmp_path = tmp.name
+                tmp_jobs.append((tmp.name, uploaded_file.name))
 
-            try:
-                with get_db_session() as session:
-                    candidate = CandidateService(session).process_cv_file(tmp_path, uploaded_file.name)
-                new_results.append(
-                    {"id": candidate.id, "name": candidate.full_name, "filename": uploaded_file.name,
-                     "warning": getattr(candidate, "duplicate_warning", None)}
-                )
-                completed += 1
-            except DuplicateCandidateError as exc:
-                st.warning(f"⚠️ {uploaded_file.name}: {exc}")
-            except (ValidationError, SmartATSError) as exc:
-                st.error(f"❌ {uploaded_file.name}: {exc}")
-                errors += 1
-            finally:
-                Path(tmp_path).unlink(missing_ok=True)
+        total = len(tmp_jobs)
+        progress = st.progress(0.0, text="جاري المعالجة...")
+        completed, errors, done = 0, 0, 0
+        new_results: list[dict] = []
 
-            progress.progress(i / len(uploaded_files), text=f"تمت معالجة {i} / {len(uploaded_files)}")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, total)) as executor:
+            futures = [executor.submit(_process_one, path, name) for path, name in tmp_jobs]
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                done += 1
+
+                if result["ok"]:
+                    new_results.append(
+                        {
+                            "id": result["id"],
+                            "name": result["name"],
+                            "filename": result["filename"],
+                            "warning": result["warning"],
+                        }
+                    )
+                    completed += 1
+                elif result.get("duplicate"):
+                    st.warning(f"⚠️ {result['filename']}: {result['message']}")
+                else:
+                    st.error(f"❌ {result['filename']}: {result['message']}")
+                    errors += 1
+
+                progress.progress(done / total, text=f"تمت معالجة {done} / {total}")
 
         st.session_state[_RESULTS_KEY] = new_results
         st.info(f"انتهت المعالجة — نجاح: {completed} | أخطاء: {errors}")
