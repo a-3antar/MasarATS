@@ -1,4 +1,4 @@
-"""صفحة المطابقة: (1) وظيفة ← أفضل المرشحين، (2) مرشح ← أفضل الوظائف. مع شرح الدرجة وفلتر حد أدنى."""
+"""صفحة المطابقة: (1) وظيفة ← أفضل المرشحين (لوحة Kanban حسب مرحلة التوظيف)، (2) مرشح ← أفضل الوظائف."""
 
 import streamlit as st
 
@@ -16,7 +16,7 @@ _JOB_RESULTS_KEY = "matching_results"
 _CANDIDATE_RESULTS_KEY = "matching_candidate_results"
 
 
-def _render_details(r: dict) -> None:
+def _render_match_details(r: dict) -> None:
     """تفاصيل الدرجة (مشتركة بين الاتجاهين)."""
     with st.expander("تفاصيل الدرجة"):
         b = r["breakdown"]
@@ -34,6 +34,65 @@ def _render_details(r: dict) -> None:
                 st.write(g)
 
 
+def _change_application_status(application_id: int, new_status: str) -> None:
+    """ينقل تقديماً إلى مرحلة جديدة ويعيد تحميل النتائج المخزّنة في session_state لتعكس النقل فوراً."""
+    try:
+        with get_db_session() as session:
+            ApplicationService(session).change_status(application_id, new_status)
+
+        state = st.session_state.get(_JOB_RESULTS_KEY)
+        if state:
+            for r in state["results"]:
+                if r["application"].id == application_id:
+                    r["application"].status = new_status
+                    break
+
+        st.toast("تم تحديث مرحلة التوظيف ✅")
+        st.rerun()
+    except SmartATSError as exc:
+        st.error(str(exc))
+
+
+def _render_kanban_card(r: dict, status: str) -> None:
+    candidate = r["candidate"]
+    idx = APPLICATION_STATUSES.index(status)
+
+    with st.container(border=True):
+        st.markdown(f"**{candidate.full_name}**")
+        st.caption(candidate.current_position or "لا يوجد مسمى وظيفي مسجّل")
+        st.write(f"🎯 {r['score']}%")
+        _render_match_details(r)
+
+        col_back, col_fwd = st.columns(2)
+        with col_back:
+            if idx > 0 and st.button(
+                "◀ رجوع", key=f"kanban_back_{r['application'].id}", width="stretch"
+            ):
+                _change_application_status(r["application"].id, APPLICATION_STATUSES[idx - 1])
+        with col_fwd:
+            if idx < len(APPLICATION_STATUSES) - 1 and st.button(
+                "تقديم ▶", key=f"kanban_fwd_{r['application'].id}", width="stretch"
+            ):
+                _change_application_status(r["application"].id, APPLICATION_STATUSES[idx + 1])
+
+
+def _render_kanban_board(results: list[dict]) -> None:
+    """لوحة Kanban: عمود لكل مرحلة من مراحل خط التوظيف، بدل قائمة selectbox لتغيير الحالة."""
+    grouped: dict[str, list[dict]] = {status: [] for status in APPLICATION_STATUSES}
+    for r in results:
+        status = r["application"].status
+        if status not in grouped:
+            status = APPLICATION_STATUSES[0]
+        grouped[status].append(r)
+
+    columns = st.columns(len(APPLICATION_STATUSES))
+    for col, status in zip(columns, APPLICATION_STATUSES):
+        with col:
+            st.markdown(f"##### {status} ({len(grouped[status])})")
+            for r in grouped[status]:
+                _render_kanban_card(r, status)
+
+
 def _render_candidate_result(r: dict) -> None:
     candidate = r["candidate"]
     with st.container(border=True):
@@ -43,21 +102,7 @@ def _render_candidate_result(r: dict) -> None:
             st.caption(candidate.current_position or "لا يوجد مسمى وظيفي مسجّل")
         with col2:
             st.metric("درجة المطابقة", f"{r['score']}%")
-        _render_details(r)
-
-
-def _render_job_result(r: dict) -> None:
-    job = r["job"]
-    with st.container(border=True):
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.subheader(f"{job.title}")
-            st.caption(
-                f"{job.department or 'بدون قسم'} · {job.location or 'بدون موقع'} · الحالة: {job.status}"
-            )
-        with col2:
-            st.metric("درجة المطابقة", f"{r['score']}%")
-        _render_details(r)
+        _render_match_details(r)
 
 
 def _render_job_to_candidates() -> None:
@@ -103,8 +148,21 @@ def _render_job_to_candidates() -> None:
         st.warning("لا يوجد مرشحون بهذه النسبة أو أعلى. خفّض الحد الأدنى لعرض المزيد.")
         return
 
-    for r in filtered:
-        _render_candidate_result(r)
+    _render_kanban_board(filtered)
+
+
+def _render_job_result(r: dict) -> None:
+    job = r["job"]
+    with st.container(border=True):
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.subheader(f"{job.title}")
+            st.caption(
+                f"{job.department or 'بدون قسم'} · {job.location or 'بدون موقع'} · الحالة: {job.status}"
+            )
+        with col2:
+            st.metric("درجة المطابقة", f"{r['score']}%")
+        _render_match_details(r)
 
 
 def _render_candidate_to_jobs() -> None:
@@ -169,48 +227,3 @@ def render() -> None:
         _render_job_to_candidates()
     with tab_candidate:
         _render_candidate_to_jobs()
-
-def _render_status_control(application) -> None:
-    """اختيار مرحلة التقديم (خط التوظيف) وحفظها؛ تتزامن معها حالة المرشح العامة."""
-    key = f"app_status_{application.id}"
-    current = application.status if application.status in APPLICATION_STATUSES else APPLICATION_STATUSES[0]
-
-    col_select, col_save = st.columns([3, 1])
-    with col_select:
-        new_status = st.selectbox(
-            "مرحلة التوظيف", APPLICATION_STATUSES,
-            index=APPLICATION_STATUSES.index(current), key=key,
-        )
-    with col_save:
-        st.write("")  # محاذاة الزر مع الـ selectbox
-        save = st.button("حفظ", key=f"{key}_save", disabled=new_status == current)
-
-    if save:
-        try:
-            with get_db_session() as session:
-                ApplicationService(session).change_status(application.id, new_status)
-            application.status = new_status  # النتائج المخزّنة في session_state تبقى متسقة
-            st.toast("تم تحديث مرحلة التوظيف ✅")
-            st.rerun()
-        except SmartATSError as exc:
-            st.error(str(exc))
-
-
-def _render_details(r: dict) -> None:
-    """مرحلة التوظيف + تفاصيل الدرجة (مشتركة بين الاتجاهين)."""
-    _render_status_control(r["application"])
-    with st.expander("تفاصيل الدرجة"):
-        b = r["breakdown"]
-        st.write(
-            f"المهارات: {b['skills']}% · الخبرة: {b['experience']}% · "
-            f"الموقع: {b['location']}% · التعليم: {b['education']}%"
-        )
-        if r["strengths"]:
-            st.markdown("**نقاط القوة:**")
-            for s in r["strengths"]:
-                st.write(s)
-        if r["gaps"]:
-            st.markdown("**فجوات محتملة:**")
-            for g in r["gaps"]:
-                st.write(g)
-
