@@ -30,6 +30,9 @@ from repositories.candidate_repository import CandidateRepository
 from services.experience_calculator import estimate_total_years
 from services.duplicate_detector import DuplicateDetector
 
+from concurrent.futures import ThreadPoolExecutor
+
+
 logger = get_logger(__name__)
 
 PHOTOS_DIR = BASE_DIR / PHOTOS_SUBDIR
@@ -83,21 +86,27 @@ class CandidateService:
         parser = DocumentParserFactory.get_parser(file_path)
         raw_text = parser.extract_text(file_path)
 
-        profile = self._extract_profile(raw_text, fallback_name=Path(original_filename).stem)
-        full_name = profile.full_name or Path(original_filename).stem
+        # استخراج الصورة لا يعتمد على نص السيرة، فنشغّله في Thread منفصل بالتوازي مع استدعاء AI
+        # (كل منهما قد يستدعي Gemini، وتشغيلهما بالتوازي بدل التتابع يقلّل زمن معالجة الملف الواحد بشكل ملحوظ).
+        # ملاحظة: في الحالة النادرة التي يتبيّن فيها لاحقاً أن الملف مكرر، نكون قد صرفنا نداء Gemini
+        # إضافياً بلا داعٍ - وهذا مقبول مقابل تسريع الحالة الغالبة (ملف غير مكرر).
+        with ThreadPoolExecutor(max_workers=1) as photo_executor:
+            photo_future = photo_executor.submit(parser.extract_photo, file_path)
 
-        # كشف التكرار قبل استخراج الصورة (استخراجها قد يستدعي Gemini فلا نصرف عليه لمكرر)
-        matches = self._duplicates.find_duplicates(
-            full_name=full_name,
-            email=profile.email,
-            phone=profile.phone,
-            linkedin_url=profile.linkedin_url,
-        )
-        strong = next((m for m in matches if m.is_strong), None)
-        if strong is not None:
-            raise DuplicateCandidateError(f"مرشح مكرر: {strong.describe()}")
+            profile = self._extract_profile(raw_text, fallback_name=Path(original_filename).stem)
+            full_name = profile.full_name or Path(original_filename).stem
 
-        photo = parser.extract_photo(file_path)
+            matches = self._duplicates.find_duplicates(
+                full_name=full_name,
+                email=profile.email,
+                phone=profile.phone,
+                linkedin_url=profile.linkedin_url,
+            )
+            strong = next((m for m in matches if m.is_strong), None)
+            if strong is not None:
+                raise DuplicateCandidateError(f"مرشح مكرر: {strong.describe()}")
+
+            photo = photo_future.result()
 
         candidate = Candidate(
             full_name=full_name,

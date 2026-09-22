@@ -21,13 +21,27 @@ logger = get_logger(__name__)
 class Base(DeclarativeBase):
     """القاعدة المشتركة لكل نماذج SQLAlchemy (Models) في التطبيق."""
 
-
 def _build_engine():
     settings = get_settings()
-    # connect_args خاص بـ SQLite فقط للسماح باستخدامه من ثريدات متعددة (Streamlit)
-    connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
-    return create_engine(settings.database_url, connect_args=connect_args, echo=False)
+    # connect_args خاص بـ SQLite: السماح بالوصول من عدة ثريدات + مهلة انتظار عند القفل
+    # بدل الفشل الفوري (ضروري الآن لأن رفع عدة سير ذاتية يُعالَج بالتوازي في عدة Threads).
+    connect_args = (
+        {"check_same_thread": False, "timeout": 30} if settings.database_url.startswith("sqlite") else {}
+    )
+    engine = create_engine(settings.database_url, connect_args=connect_args, echo=False)
 
+    if settings.database_url.startswith("sqlite"):
+        from sqlalchemy import event
+
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragmas(dbapi_connection, _):
+            # WAL يسمح بقراءة/كتابة متزامنة أفضل من وضع SQLite الافتراضي (DELETE journal mode)
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.close()
+
+    return engine
 
 engine = _build_engine()
 # expire_on_commit=False مهم هنا: صفحات Streamlit تقرأ خصائص الكائنات (مثل candidate.full_name)
