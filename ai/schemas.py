@@ -112,3 +112,19 @@ class CandidateProfile(BaseModel):
             match = re.search(r"\d{1,3}", str(value))
             age = int(match.group(0)) if match else None
         return age if age is not None and 15 <= age <= 80 else None
+
+class CandidateSearchFilters(BaseModel):
+    """فلاتر بحث مهيكلة يستخرجها الذكاء الاصطناعي من طلب بلغة طبيعية."""
+
+    role: str | None = None
+    experience_min: float | None = None
+    experience_max: float | None = None
+    skills: list[str] = Field(default_factory=list)
+    industry: str | None = None
+    location: str | None = None
+
+    @field_validator("skills", mode="before")
+    @classmethod
+    def _normalize_skills(cls, value: Any) -> Any:
+        return _coerce_to_str_list(value)
+    

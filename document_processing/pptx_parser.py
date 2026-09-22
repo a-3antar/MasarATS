@@ -2,7 +2,7 @@
 
 import io
 
-from core.constants import PHOTO_SEARCH_MAX_PAGES
+from core.constants import PHOTO_SEARCH_MAX_views
 from core.exceptions import DocumentParsingError
 from core.logging import get_logger
 from document_processing.base import DocumentParser, PhotoCandidate, pick_best_photo
@@ -64,7 +64,7 @@ class PowerPointParser(DocumentParser):
         try:
             presentation = Presentation(file_path)
             found: list[PhotoCandidate] = []
-            for slide in list(presentation.slides)[:PHOTO_SEARCH_MAX_PAGES]:
+            for slide in list(presentation.slides)[:PHOTO_SEARCH_MAX_views]:
                 for picture in self._iter_pictures(slide.shapes):
                     blob = picture.image.blob
                     try:

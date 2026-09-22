@@ -96,7 +96,7 @@ def _login_view() -> None:
                     st.error(str(exc))
 
 
-PAGES = {
+views = {
     "🏠 الرئيسية": "home",
     "📄 رفع سيرة ذاتية": "upload_cv",
     "👥 المرشحون": "candidates",
@@ -125,27 +125,27 @@ def _authenticated_view() -> None:
         st.markdown(f"**{user['full_name']}**")
         st.caption(f"@{user['username']} · {user['role']}")
         st.divider()
-        selected_page = st.radio("التنقل", list(PAGES.keys()), label_visibility="collapsed")
+        selected_page = st.radio("التنقل", list(views.keys()), label_visibility="collapsed")
         st.divider()
         if st.button("تسجيل الخروج", width='stretch'):
             st.session_state.user = None
             st.rerun()
 
-    page_key = PAGES[selected_page]
+    page_key = views[selected_page]
 
     if page_key == "home":
         _render_home(user)
     elif page_key == "upload_cv":
-        from pages import upload_cv
+        from views import upload_cv
         upload_cv.render()
     elif page_key == "candidates":
-        from pages import candidates
+        from views import candidates
         candidates.render()
     elif page_key == "jobs":
-        from pages import jobs
+        from views import jobs
         jobs.render()
     elif page_key == "matching":
-        from pages import matching
+        from views import matching
         matching.render()
 
 

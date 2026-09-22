@@ -28,3 +28,7 @@ class ApplicationRepository(BaseRepository[Application]):
     def delete_for_job(self, job_id: int) -> None:
         """حذف كل التقديمات المرتبطة بوظيفة (قبل حذف الوظيفة نفسها)."""
         self._session.execute(delete(Application).where(Application.job_id == job_id))
+
+    def get_for_candidate(self, candidate_id: int) -> list[Application]:
+        stmt = select(Application).where(Application.candidate_id == candidate_id)
+        return list(self._session.scalars(stmt).all())

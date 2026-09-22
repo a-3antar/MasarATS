@@ -8,7 +8,7 @@ import streamlit as st
 from config.settings import get_settings
 from core.exceptions import DuplicateCandidateError, SmartATSError, ValidationError
 from database.database import get_db_session
-from pages import candidate_profile
+from views import candidate_profile
 from services.candidate_service import CandidateService
 
 # مفتاح حفظ نتائج الرفع في session_state حتى لا تختفي البطاقات عند أي rerun (مثل حفظ تعديل)

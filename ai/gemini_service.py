@@ -140,3 +140,29 @@ class GeminiService(AIProvider):
         except Exception as exc:
             logger.error("Gemini translation failed: %s | raw_response=%s", exc, raw_text[:2000])
             raise AIServiceError(f"فشل ترجمة البيانات: {exc}") from exc
+
+    def parse_search_query(self, query: str):
+        """يحوّل طلب بحث بلغة طبيعية إلى CandidateSearchFilters. يرفع AIServiceError عند الفشل."""
+        from ai.prompts import NL_SEARCH_PROMPT_TEMPLATE
+        from ai.schemas import CandidateSearchFilters
+
+        raw_text = ""
+        try:
+            model = self._genai.GenerativeModel(
+                model_name=self._settings.ai_model,
+                generation_config={
+                    "temperature": 0.0,
+                    "response_mime_type": "application/json",
+                    "response_schema": _pydantic_to_gemini_schema(CandidateSearchFilters),
+                    "max_output_tokens": 1024,
+                },
+            )
+            response = model.generate_content(NL_SEARCH_PROMPT_TEMPLATE.format(query=query[:1000]))
+            raw_text = response.text
+            return CandidateSearchFilters.model_validate(json.loads(raw_text))
+        except ValidationError as exc:
+            logger.error("Search filters failed validation: %s | raw_response=%s", exc, raw_text[:1000])
+            raise AIServiceError("استجابة الذكاء الاصطناعي لم تطابق الشكل المتوقع.") from exc
+        except Exception as exc:
+            logger.error("Gemini search parsing failed: %s | raw_response=%s", exc, raw_text[:1000])
+            raise AIServiceError(f"فشل فهم طلب البحث: {exc}") from exc

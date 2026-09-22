@@ -20,15 +20,15 @@ APPLICATION_STATUSES: list[str] = [
 PHOTOS_SUBDIR: str = "uploads/photos"
 PHOTO_MIN_SIDE_PX: int = 100          # أصغر بُعد مقبول (يستبعد الأيقونات الصغيرة)
 PHOTO_MAX_ASPECT_RATIO: float = 1.6   # أقصى نسبة بين الطول والعرض (يستبعد الشعارات والشرائط العريضة)
-PHOTO_SEARCH_MAX_PAGES: int = 2       # نبحث عن الصورة في أول صفحتين فقط
+PHOTO_SEARCH_MAX_views: int = 2       # نبحث عن الصورة في أول صفحتين فقط
 PHOTO_MAX_SIDE_PX: int = 600          # تصغير الصورة المحفوظة لتوفير المساحة
 
-CANDIDATE_STATUSES: list[str] = ["New", "Screened", "Interview", "Offered", "Rejected"]
+CANDIDATE_STATUSES: list[str] = APPLICATION_STATUSES  # حالة المرشح تستخدم نفس مراحل خط التوظيف
 
 # قراءة الصفحات الصورية عبر Gemini Vision
 OCR_DPI: int = 150                  # كافٍ للقراءة ويقلل حجم الصورة المرسلة
 OCR_MIN_CHARS_PER_PAGE: int = 30    # أقل من هذا العدد من الحروف → نعتبر الصفحة صورة
-OCR_MAX_PAGES: int = 5              # أقصى عدد صفحات تُرسل للقراءة لكل ملف (حماية من التكلفة)
+OCR_MAX_views: int = 5              # أقصى عدد صفحات تُرسل للقراءة لكل ملف (حماية من التكلفة)
 
 # استبعاد الصور التي هي في الحقيقة صفحة كاملة، واكتشاف الوجه كبديل
 PHOTO_MAX_PAGE_COVERAGE: float = 0.25  # صورة تغطي أكثر من هذه النسبة من مساحة الصفحة ليست صورة شخصية
@@ -40,3 +40,8 @@ DUPLICATE_NAME_SIMILARITY_THRESHOLD: float = 0.88  # أقل نسبة تشابه 
 PHONE_MIN_DIGITS: int = 8                          # أقل من هذا لا يُعتبر رقماً صالحاً للمقارنة
 PHONE_MATCH_DIGITS: int = 10                       # نقارن آخر 10 أرقام (يتجاوز كود الدولة)
 DUPLICATE_SCAN_LIMIT: int = 100_000                # حد أمان لعدد المرشحين الممسوحين
+
+# مطابقة المهارات والبحث الذكي
+SKILL_FUZZY_THRESHOLD: float = 0.88   # أقل تشابه إملائي يُعتبر نفس المهارة
+SKILL_FUZZY_MIN_LENGTH: int = 5       # المهارات الأقصر (SAP, C#) تُقارن بتطابق تام فقط
+SEARCH_MAX_CANDIDATES: int = 5000     # حد أمان لعدد المرشحين الممسوحين في البحث الذكي

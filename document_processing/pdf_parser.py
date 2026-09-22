@@ -3,10 +3,10 @@
 from ai.vision import transcribe_image
 from core.constants import (
     OCR_DPI,
-    OCR_MAX_PAGES,
+    OCR_MAX_views,
     OCR_MIN_CHARS_PER_PAGE,
     PHOTO_MAX_PAGE_COVERAGE,
-    PHOTO_SEARCH_MAX_PAGES,
+    PHOTO_SEARCH_MAX_views,
 )
 from core.exceptions import AIServiceError, DocumentParsingError
 from core.logging import get_logger
@@ -26,20 +26,20 @@ class PDFParser(DocumentParser):
 
         try:
             text_parts: list[str] = []
-            vision_pages = 0
+            vision_views = 0
             with fitz.open(file_path) as document:
                 for page in document:
                     page_text = page.get_text().strip()
-                    if len(page_text) < OCR_MIN_CHARS_PER_PAGE and vision_pages < OCR_MAX_PAGES:
+                    if len(page_text) < OCR_MIN_CHARS_PER_PAGE and vision_views < OCR_MAX_views:
                         vision_text = self._read_page_with_vision(page)
-                        vision_pages += 1
+                        vision_views += 1
                         if vision_text:
                             page_text = f"{page_text}\n{vision_text}".strip()
                     text_parts.append(page_text)
 
             text = "\n".join(text_parts).strip()
-            if vision_pages:
-                logger.info("Gemini Vision used for %s page(s) of %s", vision_pages, file_path)
+            if vision_views:
+                logger.info("Gemini Vision used for %s page(s) of %s", vision_views, file_path)
 
             if not text:
                 raise DocumentParsingError("لم يتم العثور على نص في الملف حتى بعد قراءته بالذكاء الاصطناعي.")
@@ -79,7 +79,7 @@ class PDFParser(DocumentParser):
                 first_page = document[0]
                 page_area = first_page.rect.width * first_page.rect.height
 
-                for page_index in range(min(len(document), PHOTO_SEARCH_MAX_PAGES)):
+                for page_index in range(min(len(document), PHOTO_SEARCH_MAX_views)):
                     for image_info in document[page_index].get_images(full=True):
                         extracted = document.extract_image(image_info[0])
                         if extracted:

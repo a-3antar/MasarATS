@@ -10,6 +10,7 @@ from core.constants import DEFAULT_MATCH_WEIGHTS
 from matching.base import MatchingEngine
 from models.candidate import Candidate
 from models.job import Job
+from matching.skill_normalizer import canonical_skill_set, has_skill
 
 
 def _normalize(value: str) -> str:
@@ -59,14 +60,13 @@ class RuleBasedMatchingEngine(MatchingEngine):
 
     @staticmethod
     def _score_skills(candidate: Candidate, job: Job) -> tuple[float, list[str], list[str]]:
-        required = [_normalize(s) for s in job.all_required_skills]
-        candidate_skills = {_normalize(s) for s in candidate.all_skills}
-
+        required = job.all_required_skills
         if not required:
             return 100.0, [], []
 
-        matched = [s for s in required if s in candidate_skills]
-        missing = [s for s in required if s not in candidate_skills]
+        candidate_keys = canonical_skill_set(candidate.all_skills)
+        matched = [s for s in required if has_skill(s, candidate_keys)]
+        missing = [s for s in required if s not in matched]
         score = (len(matched) / len(required)) * 100
         return score, matched, missing
 

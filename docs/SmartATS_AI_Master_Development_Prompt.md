@@ -218,7 +218,7 @@ smartats/
 │   ├── base.py
 │   └── migrations/
 │
-├── pages/
+├── views/
 │   ├── dashboard.py
 │   ├── candidates.py
 │   ├── candidate_profile.py
@@ -1166,7 +1166,7 @@ INTERVIEW_PROMPT_V1
 NATURAL_LANGUAGE_QUERY_PROMPT_V1
 ```
 
-Never scatter large prompts throughout Streamlit pages.
+Never scatter large prompts throughout Streamlit views.
 
 ---
 
@@ -1486,7 +1486,7 @@ render_empty_state()
 render_error_state()
 ```
 
-Do not duplicate UI code across pages.
+Do not duplicate UI code across views.
 
 ---
 

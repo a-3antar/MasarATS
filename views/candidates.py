@@ -5,9 +5,14 @@ import streamlit as st
 
 from database.database import get_db_session
 from models.candidate import Candidate
-from pages import candidate_profile
+from views import candidate_profile
 from services.candidate_service import CandidateService
 from services.export_service import ExportService
+
+from ai.schemas import CandidateSearchFilters
+from core.exceptions import AIServiceError
+from services.search_service import SearchService
+
 
 _MAX_SKILLS_IN_TABLE = None  # الحد الأقصى لعدد المهارات التي سيتم عرضها في الجدول، أو None لعرض جميع المهارات
 
@@ -86,21 +91,67 @@ def _render_manual_form() -> None:
             except Exception as exc:  # noqa: BLE001 - عرض أي خطأ تحقق للمستخدم مباشرة
                 st.error(str(exc))
 
+@st.cache_data(show_spinner="🤖 جاري فهم طلب البحث...", ttl=3600)
+def _parse_search_query(query: str) -> dict:
+    """مخزّنة مؤقتاً حتى لا يُستدعى Gemini عند كل rerun (مثل اختيار صف في الجدول)."""
+    return SearchService.parse_query(query).model_dump()
+
+
+def _describe_filters(f: CandidateSearchFilters) -> str:
+    parts = []
+    if f.role:
+        parts.append(f"المسمى: {f.role}")
+    if f.experience_min is not None:
+        parts.append(f"خبرة ≥ {f.experience_min:g}")
+    if f.experience_max is not None:
+        parts.append(f"خبرة ≤ {f.experience_max:g}")
+    if f.industry:
+        parts.append(f"المجال: {f.industry}")
+    if f.skills:
+        parts.append("المهارات: " + ", ".join(f.skills))
+    if f.location:
+        parts.append(f"الموقع: {f.location}")
+    return " | ".join(parts) or "لم يُستخرج أي فلتر من الطلب"
+
+
 def render() -> None:
     st.header("👥 المرشحون")
 
     _render_manual_form()
 
-    query = st.text_input("بحث بالاسم / البريد / المسمى الوظيفي", "")
+    smart = st.toggle(
+        "🤖 بحث بلغة طبيعية", key="candidates_smart_toggle",
+        help="مثال: مدير إنتاج بخبرة أكثر من 10 سنوات في البلاستيك ويعرف الحقن والبثق في العاشر من رمضان",
+    )
+    query = st.text_input(
+        "صف المرشح المطلوب" if smart else "بحث بالاسم / البريد / المسمى الوظيفي", "", key="candidates_query"
+    )
 
+    filters: CandidateSearchFilters | None = None
+    if smart and query.strip():
+        try:
+            filters = CandidateSearchFilters(**_parse_search_query(query.strip()))
+            st.caption(f"🔎 {_describe_filters(filters)}")
+        except AIServiceError as exc:
+            st.warning(f"تعذّر الفهم الذكي للطلب ({exc}) — تم استخدام البحث النصي العادي.")
+
+    reasons: dict[int, str] = {}
     with get_db_session() as session:
-        candidates = CandidateService(session).search(query)
+        if filters is not None:
+            found = SearchService(session).search(filters)
+            candidates = [r["candidate"] for r in found]
+            reasons = {r["candidate"].id: " · ".join(r["reasons"]) or "-" for r in found}
+        else:
+            candidates = CandidateService(session).search(query)
         candidate_ids = [c.id for c in candidates]
         rows = [_to_row(c) for c in candidates]
+        if filters is not None:
+            rows = [{**row, "سبب التطابق": reasons[c.id]} for row, c in zip(rows, candidates)]
         export_df = ExportService.candidates_to_dataframe(candidates)
 
     if not rows:
-        st.info("لا يوجد مرشحون بعد. ابدأ برفع سيرة ذاتية من صفحة «رفع سيرة ذاتية».")
+        st.info("لا توجد نتائج مطابقة." if query.strip()
+                else "لا يوجد مرشحون بعد. ابدأ برفع سيرة ذاتية من صفحة «رفع سيرة ذاتية».")
         return
 
     csv_col, xlsx_col, _ = st.columns([1, 1, 4])
@@ -119,7 +170,7 @@ def render() -> None:
 
     event = st.dataframe(
         pd.DataFrame(rows),
-        width='stretch',
+        width="stretch",
         hide_index=True,
         on_select="rerun",
         selection_mode="single-row",

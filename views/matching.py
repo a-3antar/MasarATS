@@ -6,6 +6,10 @@ from database.database import get_db_session
 from services.candidate_service import CandidateService
 from services.job_service import JobService
 from services.matching_service import MatchingService
+from core.constants import APPLICATION_STATUSES
+from core.exceptions import SmartATSError
+from services.application_service import ApplicationService
+
 
 # حفظ النتائج في session_state حتى لا تختفي عند تغيير الفلتر (أي rerun)
 _JOB_RESULTS_KEY = "matching_results"
@@ -165,3 +169,48 @@ def render() -> None:
         _render_job_to_candidates()
     with tab_candidate:
         _render_candidate_to_jobs()
+
+def _render_status_control(application) -> None:
+    """اختيار مرحلة التقديم (خط التوظيف) وحفظها؛ تتزامن معها حالة المرشح العامة."""
+    key = f"app_status_{application.id}"
+    current = application.status if application.status in APPLICATION_STATUSES else APPLICATION_STATUSES[0]
+
+    col_select, col_save = st.columns([3, 1])
+    with col_select:
+        new_status = st.selectbox(
+            "مرحلة التوظيف", APPLICATION_STATUSES,
+            index=APPLICATION_STATUSES.index(current), key=key,
+        )
+    with col_save:
+        st.write("")  # محاذاة الزر مع الـ selectbox
+        save = st.button("حفظ", key=f"{key}_save", disabled=new_status == current)
+
+    if save:
+        try:
+            with get_db_session() as session:
+                ApplicationService(session).change_status(application.id, new_status)
+            application.status = new_status  # النتائج المخزّنة في session_state تبقى متسقة
+            st.toast("تم تحديث مرحلة التوظيف ✅")
+            st.rerun()
+        except SmartATSError as exc:
+            st.error(str(exc))
+
+
+def _render_details(r: dict) -> None:
+    """مرحلة التوظيف + تفاصيل الدرجة (مشتركة بين الاتجاهين)."""
+    _render_status_control(r["application"])
+    with st.expander("تفاصيل الدرجة"):
+        b = r["breakdown"]
+        st.write(
+            f"المهارات: {b['skills']}% · الخبرة: {b['experience']}% · "
+            f"الموقع: {b['location']}% · التعليم: {b['education']}%"
+        )
+        if r["strengths"]:
+            st.markdown("**نقاط القوة:**")
+            for s in r["strengths"]:
+                st.write(s)
+        if r["gaps"]:
+            st.markdown("**فجوات محتملة:**")
+            for g in r["gaps"]:
+                st.write(g)
+

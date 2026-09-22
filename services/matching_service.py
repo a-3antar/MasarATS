@@ -20,8 +20,8 @@ class MatchingService:
         results = []
         for candidate in candidates:
             result = self._engine.calculate_match(candidate, job)
-            self._save_or_update_application(candidate.id, job.id, result)
-            results.append({"candidate": candidate, **result})
+            application = self._save_or_update_application(candidate.id, job.id, result)
+            results.append({"candidate": candidate, "application": application, **result})
 
         results.sort(key=lambda r: r["score"], reverse=True)
         return results
@@ -31,8 +31,8 @@ class MatchingService:
         results = []
         for job in jobs:
             result = self._engine.calculate_match(candidate, job)
-            self._save_or_update_application(candidate.id, job.id, result)
-            results.append({"job": job, **result})
+            application = self._save_or_update_application(candidate.id, job.id, result)
+            results.append({"job": job, "application": application, **result})
 
         results.sort(key=lambda r: r["score"], reverse=True)
         return results
