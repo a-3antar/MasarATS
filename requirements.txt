@@ -14,7 +14,7 @@ Pillow>=10.0
 opencv-python-headless>=4.9
 openpyxl>=3.1
 python-pptx>=1.0
+streamlit-cookies-controller>=0.0.4
 # سيتم إضافتها لاحقاً في مراحل قادمة:
-# python-pptx  -> قراءة PowerPoint
 # plotly       -> الرسوم البيانية التفاعلية في لوحة المعلومات
 # pytesseract  -> OCR للسير الذاتية الممسوحة ضوئياً

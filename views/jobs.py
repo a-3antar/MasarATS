@@ -25,6 +25,29 @@ _LIST_FIELDS: list[tuple[str, str]] = [
 _DEFAULT_STATUS_INDEX = 1  # "Open"
 
 
+def _invalidate_job_related_caches() -> None:
+    """
+    قوائم الوظائف مخزّنة مؤقتاً في أكثر من صفحة (المطابقة، المقابلات)، ونتيجة
+    "الوظائف المناسبة" مخزّنة في بطاقة المرشح. يجب مسحها كلها عند أي تغيير في الوظائف
+    حتى لا تظهر بيانات قديمة بعد الحفظ مباشرة.
+    """
+    try:
+        from views import matching as _matching
+        _matching._cached_jobs.clear()
+    except Exception:
+        pass
+    try:
+        from views import interviews as _interviews
+        _interviews._cached_jobs.clear()
+    except Exception:
+        pass
+    try:
+        from views import candidate_profile as _profile
+        _profile.clear_suitable_jobs_cache()
+    except Exception:
+        pass
+
+
 def _split_items(raw: str) -> list[str]:
     """تقسيم نص مفصول بفاصلة (إنجليزية أو عربية) أو أسطر إلى قائمة نظيفة."""
     return [part.strip() for part in re.split(r"[,،\n]", raw or "") if part.strip()]
@@ -82,6 +105,7 @@ def _render_add_form() -> None:
             try:
                 with get_db_session() as session:
                     JobService(session).create_job(**values)
+                _invalidate_job_related_caches()
                 st.toast("تمت إضافة الوظيفة ✅")
                 st.rerun()
             except SmartATSError as exc:
@@ -104,6 +128,7 @@ def _render_edit_panel(job_id: int) -> None:
         try:
             with get_db_session() as session:
                 JobService(session).update_job(job_id, **values)
+            _invalidate_job_related_caches()
             st.toast("تم حفظ التعديلات ✅")
             st.rerun()
         except SmartATSError as exc:
@@ -117,6 +142,7 @@ def _render_edit_panel(job_id: int) -> None:
         try:
             with get_db_session() as session:
                 JobService(session).delete_job(job_id)
+            _invalidate_job_related_caches()
             st.toast("تم حذف الوظيفة 🗑️")
             st.rerun()
         except SmartATSError as exc:

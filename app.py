@@ -3,7 +3,7 @@ SmartATS AI - نقطة الدخول الرئيسية.
 
 هذه المرحلة (Phase 0/1) تحتوي فقط على:
 - تهيئة قاعدة البيانات
-- تسجيل الدخول / إنشاء حساب جديد
+- تسجيل الدخول / إنشاء حساب جديد (مع خيار "تذكرني")
 - صفحة رئيسية بسيطة بعد الدخول
 
 لا تحتوي هذه الطبقة (app.py) على أي منطق أعمال أو استعلامات قاعدة بيانات
@@ -16,7 +16,7 @@ from core.enums import UserRole
 from core.exceptions import AuthenticationError, InactiveUserError, SmartATSError, UserAlreadyExistsError
 from core.logging import setup_logging
 from database.database import get_db_session, init_db
-from services.auth_service import AuthService
+from services.auth_service import REMEMBER_TOKEN_DAYS, AuthService
 
 st.set_page_config(page_title="SmartATS AI", page_icon="🧩", layout="wide")
 
@@ -31,9 +31,66 @@ def _bootstrap() -> None:
 _bootstrap()
 
 
+# ---------------------------------------------------------- كوكيز "تذكرني"
+# نستخدم مكتبة streamlit-cookies-controller (pip install streamlit-cookies-controller).
+# لو غير مثبّتة، يستمر التطبيق بالعمل بشكل طبيعي لكن بدون خاصية "تذكرني".
+try:
+    from streamlit_cookies_controller import CookieController
+
+    _cookies = CookieController()
+    _COOKIES_AVAILABLE = True
+except ImportError:
+    _cookies = None
+    _COOKIES_AVAILABLE = False
+
+_COOKIE_UID = "smartats_uid"
+_COOKIE_TOKEN = "smartats_rtoken"
+
+
+def _set_remember_cookies(user_id: int, token: str) -> None:
+    if not _COOKIES_AVAILABLE:
+        return
+    max_age = REMEMBER_TOKEN_DAYS * 24 * 3600
+    _cookies.set(_COOKIE_UID, str(user_id), max_age=max_age)
+    _cookies.set(_COOKIE_TOKEN, token, max_age=max_age)
+
+
+def _clear_remember_cookies() -> None:
+    if not _COOKIES_AVAILABLE:
+        return
+    _cookies.remove(_COOKIE_UID)
+    _cookies.remove(_COOKIE_TOKEN)
+
+
+def _try_auto_login() -> None:
+    """يحاول تسجيل الدخول تلقائياً من كوكيز "تذكرني" إن وُجدت وكانت صالحة."""
+    if not _COOKIES_AVAILABLE or st.session_state.get("user") is not None:
+        return
+
+    uid = _cookies.get(_COOKIE_UID)
+    token = _cookies.get(_COOKIE_TOKEN)
+    if not uid or not token:
+        return
+
+    try:
+        with get_db_session() as session:
+            user = AuthService(session).authenticate_by_token(int(uid), token)
+            if user is not None:
+                st.session_state.user = {
+                    "id": user.id,
+                    "username": user.username,
+                    "full_name": user.full_name,
+                    "role": user.role,
+                }
+    except (ValueError, SmartATSError):
+        # كوكيز تالفة أو مستخدم غير صالح - نتجاهلها بصمت ونطلب تسجيل دخول عادي
+        _clear_remember_cookies()
+
+
 def _init_session_state() -> None:
     if "user" not in st.session_state:
         st.session_state.user = None  # dict بسيط: id / username / full_name / role
+    _try_auto_login()
 
 
 def _login_view() -> None:
@@ -46,18 +103,31 @@ def _login_view() -> None:
         with st.form("login_form"):
             username = st.text_input("اسم المستخدم")
             password = st.text_input("كلمة المرور", type="password")
+            remember_me = st.checkbox(
+                "تذكرني على هذا الجهاز",
+                value=True,
+                disabled=not _COOKIES_AVAILABLE,
+                help=None if _COOKIES_AVAILABLE else "ثبّت streamlit-cookies-controller لتفعيل هذا الخيار.",
+            )
             submitted = st.form_submit_button("دخول", width='stretch')
 
         if submitted:
             try:
                 with get_db_session() as session:
-                    user = AuthService(session).authenticate(username, password)
+                    auth_service = AuthService(session)
+                    user = auth_service.authenticate(username, password)
                     st.session_state.user = {
                         "id": user.id,
                         "username": user.username,
                         "full_name": user.full_name,
                         "role": user.role,
                     }
+                    if remember_me and _COOKIES_AVAILABLE:
+                        token = auth_service.create_remember_token(user.id)
+                        # نحفظ الكوكيز بعد الـ commit مباشرة (نفس القيم صحيحة الآن)
+                        user_id = user.id
+                if remember_me and _COOKIES_AVAILABLE:
+                    _set_remember_cookies(user_id, token)
                 st.rerun()
             except (AuthenticationError, InactiveUserError) as exc:
                 st.error(str(exc))
@@ -129,6 +199,7 @@ def _authenticated_view() -> None:
         selected_page = st.radio("التنقل", list(views.keys()), label_visibility="collapsed")
         st.divider()
         if st.button("تسجيل الخروج", width='stretch'):
+            _clear_remember_cookies()
             st.session_state.user = None
             st.rerun()
 

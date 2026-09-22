@@ -4,7 +4,8 @@
 أو إنشاء حساب — لا تحتوي الواجهة على أي استعلام قاعدة بيانات مباشر.
 """
 
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,9 @@ from models.user import User
 from repositories.user_repository import UserRepository
 
 logger = get_logger(__name__)
+
+# مدة صلاحية "تذكرني" - بعدها يُطلب تسجيل الدخول من جديد حتى لو كانت الكوكيز موجودة
+REMEMBER_TOKEN_DAYS = 30
 
 
 class AuthService:
@@ -85,3 +89,43 @@ class AuthService:
     def has_any_user(self) -> bool:
         """هل يوجد أي مستخدم مسجّل بعد؟ تُستخدم لعرض شاشة إنشاء أول حساب Admin."""
         return len(self._users.list_all(limit=1)) > 0
+
+    # ---------------------------------------------------------- "تذكرني"
+
+    def create_remember_token(self, user_id: int) -> str:
+        """
+        يولّد توكن عشوائي جديد للمستخدم ويخزّن نسخته المشفّرة فقط (bcrypt) في القاعدة.
+        يُرجع التوكن الخام مرة واحدة فقط - هذا ما يُخزَّن في كوكيز المتصفح.
+        """
+        user = self._get_or_raise(user_id)
+        token = secrets.token_urlsafe(32)
+        user.remember_token_hash = hash_password(token)
+        user.remember_token_expires = datetime.now(timezone.utc) + timedelta(days=REMEMBER_TOKEN_DAYS)
+        return token
+
+    def authenticate_by_token(self, user_id: int, token: str) -> User | None:
+        """يتحقق من توكن "تذكرني" القادم من الكوكيز. يرجع None بصمت عند أي فشل (لا يرفع استثناء)."""
+        user = self._users.get_by_id(user_id)
+        if user is None or not user.is_active or not user.remember_token_hash:
+            return None
+        if user.remember_token_expires and user.remember_token_expires < datetime.now(timezone.utc):
+            return None
+        if not verify_password(token, user.remember_token_hash):
+            return None
+
+        user.last_login_at = datetime.now(timezone.utc)
+        return user
+
+    def clear_remember_token(self, user_id: int) -> None:
+        """إبطال توكن "تذكرني" الحالي (تسجيل الخروج الكامل، أو عند الاشتباه بمشكلة أمنية)."""
+        user = self._users.get_by_id(user_id)
+        if user is not None:
+            user.remember_token_hash = None
+            user.remember_token_expires = None
+
+    def _get_or_raise(self, user_id: int) -> User:
+        user = self._users.get_by_id(user_id)
+        if user is None:
+            from core.exceptions import ValidationError
+            raise ValidationError("المستخدم غير موجود.")
+        return user

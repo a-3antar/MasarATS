@@ -17,6 +17,15 @@ from services.search_service import SearchService
 _MAX_SKILLS_IN_TABLE = None  # الحد الأقصى لعدد المهارات التي سيتم عرضها في الجدول، أو None لعرض جميع المهارات
 
 
+def _invalidate_candidate_related_caches() -> None:
+    """مسح كاش قائمة المرشحين في صفحة المطابقة بعد إضافة/تعديل مرشح."""
+    try:
+        from views import matching as _matching
+        _matching._cached_candidates.clear()
+    except Exception:
+        pass
+
+
 def _join(items: list[str] | None, limit: int | None = None) -> str:
     items = items or []
     return ", ".join(items[:limit]) if items else "-"
@@ -86,6 +95,7 @@ def _render_manual_form() -> None:
                         total_experience_years=experience or None,
                         skills=[s.strip() for s in skills_raw.split(",") if s.strip()],
                     )
+                _invalidate_candidate_related_caches()
                 st.success("تمت إضافة المرشح. يمكنك تصنيف مهاراته من بطاقته > تعديل.")
                 st.rerun()
             except Exception as exc:  # noqa: BLE001 - عرض أي خطأ تحقق للمستخدم مباشرة

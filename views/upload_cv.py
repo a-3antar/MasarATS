@@ -17,7 +17,7 @@ _RESULTS_KEY = "upload_cv_results"
 
 # عدد الملفات المعالَجة بالتوازي. أكبر من هذا قد يضغط على حصة (quota) Gemini
 # أو يزيد تعارض الكتابة على SQLite بدل تسريع المعالجة.
-_MAX_WORKERS = 4
+_MAX_WORKERS = 3
 
 
 def _process_one(tmp_path: str, filename: str) -> dict:

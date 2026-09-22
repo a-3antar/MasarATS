@@ -12,6 +12,15 @@ from services.candidate_service import CandidateService
 from services.interview_service import InterviewService
 from services.job_service import JobService
 
+# قائمة الوظائف لا تتغيّر كل ثانية - كاش بسيط يقلّل استعلامات القاعدة عند التنقل بين التبويبات
+_LIST_CACHE_TTL = 30
+
+
+@st.cache_data(ttl=_LIST_CACHE_TTL, show_spinner=False)
+def _cached_jobs() -> list:
+    with get_db_session() as session:
+        return JobService(session).list_all()
+
 
 def _interview_form_fields(key: str, interview=None, default_questions: str | None = None) -> dict:
     col1, col2 = st.columns(2)
@@ -156,8 +165,7 @@ def _render_add_interview(application_id: int, candidate, job) -> None:
 def render() -> None:
     st.header("🗓️ المقابلات")
 
-    with get_db_session() as session:
-        jobs = JobService(session).list_all()
+    jobs = _cached_jobs()
 
     if not jobs:
         st.info("أضف وظيفة أولاً من صفحة «الوظائف».")

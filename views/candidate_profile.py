@@ -35,6 +35,11 @@ _NOT_MENTIONED = "غير مذكور في السيرة الذاتية"
 _TOP_JOBS_COUNT = 5
 _MAX_SUITABLE_JOBS = 5
 
+# مدة الكاش لنتيجة "الوظائف المناسبة" - هذا الحساب كان يُعاد تشغيله بالكامل
+# (مقابل كل وظيفة مفتوحة) في كل مرة يُفتح فيها تبويب المرشح، وهو أكبر سبب لبطء
+# التنقل بين المرشحين في صفحة "المرشحون".
+_SUITABLE_JOBS_CACHE_TTL = 60
+
 
 def _tags(items: list[str]) -> str:
     return "  ".join(f"`{item.replace('`', chr(39))}`" for item in items)
@@ -67,6 +72,28 @@ def _value(candidate: Candidate, attr: str, lang: str):
     if attr == "previous_positions" and not value:
         return _positions_from_experience(candidate)
     return value
+
+
+@st.cache_data(ttl=_SUITABLE_JOBS_CACHE_TTL, show_spinner=False)
+def _cached_suitable_jobs(candidate_id: int, open_only: bool) -> list[dict]:
+    """
+    نتيجة مطابقة مرشح واحد ضد الوظائف - مخزّنة مؤقتاً حسب (candidate_id, open_only).
+    يُعاد الحساب تلقائياً بعد انتهاء المهلة، أو فوراً بعد أي تعديل على المرشح/الوظائف
+    عبر مسح الكاش (candidate_profile.clear_suitable_jobs_cache).
+    """
+    with get_db_session() as session:
+        candidate = CandidateService(session).get_by_id(candidate_id)
+        job_service = JobService(session)
+        jobs = job_service.list_open() if open_only else job_service.list_all()
+        if candidate is None or not jobs:
+            return []
+        return MatchingService(session).rank_jobs_for_candidate(candidate, jobs)[:_MAX_SUITABLE_JOBS]
+
+
+def clear_suitable_jobs_cache() -> None:
+    """تُستدعى بعد تعديل مرشح أو وظيفة حتى لا تُعرض نتيجة مطابقة قديمة من الكاش."""
+    _cached_suitable_jobs.clear()
+
 
 def render_profile(candidate_id: int) -> None:
     with get_db_session() as session:
@@ -102,18 +129,12 @@ def render_profile(candidate_id: int) -> None:
     with tab_edit:
         _render_edit_form(candidate, photo_path)
 
+
 def _render_suitable_jobs(candidate_id: int) -> None:
     """أفضل الوظائف لهذا المرشح مع شرح الدرجة (بدون expander لأن البطاقة قد تكون داخل expander)."""
     open_only = st.checkbox("الوظائف المفتوحة فقط", value=True, key=f"jobs_open_only_{candidate_id}")
 
-    with get_db_session() as session:
-        candidate = CandidateService(session).get_by_id(candidate_id)
-        job_service = JobService(session)
-        jobs = job_service.list_open() if open_only else job_service.list_all()
-        if candidate is None or not jobs:
-            results: list[dict] = []
-        else:
-            results = MatchingService(session).rank_jobs_for_candidate(candidate, jobs)[:_MAX_SUITABLE_JOBS]
+    results = _cached_suitable_jobs(candidate_id, open_only)
 
     if not results:
         st.info("لا توجد وظائف متاحة للمطابقة. أضف وظيفة من صفحة «الوظائف».")
@@ -138,6 +159,7 @@ def _render_suitable_jobs(candidate_id: int) -> None:
                 st.write(line)
             for line in r["gaps"]:
                 st.write(line)
+
 
 def _render_best_jobs(candidate_id: int) -> None:
     """أفضل الوظائف المفتوحة لهذا المرشح مع تفسير الدرجة (للعرض فقط)."""
@@ -172,6 +194,7 @@ def _render_best_jobs(candidate_id: int) -> None:
                 )
                 for line in r["strengths"] + r["gaps"]:
                     st.write(line)
+
 
 def _render_card(candidate: Candidate, photo_path, lang: str) -> None:
     col_photo, col_info = st.columns([1, 3])
@@ -344,6 +367,12 @@ def _render_edit_form(candidate: Candidate, photo_path) -> None:
                 service.remove_photo(cid)
             elif new_photo is not None:
                 service.set_photo(cid, new_photo.getvalue())
+        clear_suitable_jobs_cache()  # بيانات المرشح تغيّرت - أي مطابقة مخزّنة له أصبحت قديمة
+        try:
+            from views import matching as _matching
+            _matching._cached_candidates.clear()
+        except Exception:
+            pass
         st.toast("تم حفظ التعديلات ✅")
         st.rerun()
     except SmartATSError as exc:

@@ -15,6 +15,28 @@ from services.application_service import ApplicationService
 _JOB_RESULTS_KEY = "matching_results"
 _CANDIDATE_RESULTS_KEY = "matching_candidate_results"
 
+# مدة الكاش بالثواني لقوائم الوظائف/المرشحين الأساسية - تسريع التنقل بين التبويبات
+# (Streamlit يعيد تشغيل الصفحة كاملة في كل تفاعل، وهذه الاستعلامات لا تتغير كل ثانية)
+_LIST_CACHE_TTL = 30
+
+
+@st.cache_data(ttl=_LIST_CACHE_TTL, show_spinner=False)
+def _cached_jobs() -> list:
+    with get_db_session() as session:
+        return JobService(session).list_all()
+
+
+@st.cache_data(ttl=_LIST_CACHE_TTL, show_spinner=False)
+def _cached_candidates() -> list:
+    with get_db_session() as session:
+        return CandidateService(session).list_all()
+
+
+def _invalidate_list_caches() -> None:
+    """تُستدعى بعد أي عملية تغيّر حالة (مثل نقل تقديم) حتى لا تُعرض بيانات قديمة."""
+    _cached_jobs.clear()
+    _cached_candidates.clear()
+
 
 def _render_match_details(r: dict) -> None:
     """تفاصيل الدرجة (مشتركة بين الاتجاهين)."""
@@ -106,8 +128,7 @@ def _render_candidate_result(r: dict) -> None:
 
 
 def _render_job_to_candidates() -> None:
-    with get_db_session() as session:
-        jobs = JobService(session).list_all()
+    jobs = _cached_jobs()
 
     if not jobs:
         st.info("أضف وظيفة أولاً من صفحة «الوظائف».")
@@ -166,8 +187,7 @@ def _render_job_result(r: dict) -> None:
 
 
 def _render_candidate_to_jobs() -> None:
-    with get_db_session() as session:
-        candidates = CandidateService(session).list_all()
+    candidates = _cached_candidates()
 
     if not candidates:
         st.info("لا يوجد مرشحون بعد. ارفع سيرة ذاتية أولاً.")
