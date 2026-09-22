@@ -45,3 +45,7 @@ DUPLICATE_SCAN_LIMIT: int = 100_000                # حد أمان لعدد ال
 SKILL_FUZZY_THRESHOLD: float = 0.88   # أقل تشابه إملائي يُعتبر نفس المهارة
 SKILL_FUZZY_MIN_LENGTH: int = 5       # المهارات الأقصر (SAP, C#) تُقارن بتطابق تام فقط
 SEARCH_MAX_CANDIDATES: int = 5000     # حد أمان لعدد المرشحين الممسوحين في البحث الذكي
+
+# إدارة المقابلات
+INTERVIEW_TYPES: list[str] = ["HR", "Technical", "Management", "Behavioral", "Final"]
+INTERVIEW_STATUSES: list[str] = ["Scheduled", "Completed", "Cancelled"]

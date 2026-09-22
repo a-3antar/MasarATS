@@ -102,6 +102,7 @@ views = {
     "👥 المرشحون": "candidates",
     "💼 الوظائف": "jobs",
     "🎯 المطابقة": "matching",
+    "🗓️ المقابلات": "interviews",
 }
 
 
@@ -147,6 +148,9 @@ def _authenticated_view() -> None:
     elif page_key == "matching":
         from views import matching
         matching.render()
+    elif page_key == "interviews":
+        from views import interviews
+        interviews.render()
 
 
 def main() -> None:

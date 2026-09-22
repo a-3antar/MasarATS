@@ -13,6 +13,8 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from config.settings import get_settings
 from core.logging import get_logger
 
+
+
 logger = get_logger(__name__)
 
 
@@ -56,8 +58,7 @@ def init_db() -> None:
     """إنشاء كل الجداول المعرّفة إن لم تكن موجودة + إضافة الأعمدة الناقصة. تُستدعى عند بدء التطبيق."""
     # استيراد النماذج هنا (وليس أعلى الملف) لتفادي circular imports،
     # لأن كل نموذج يحتاج Base من هذا الملف.
-    from models import application, candidate, job, user  # noqa: F401
-
+    from models import application, candidate, interview, job, user  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()
     logger.info("Database initialized (tables ensured).")
