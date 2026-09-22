@@ -1,10 +1,11 @@
-"""قراءة نص صفحة صورية (سيرة ذاتية ممسوحة أو مصممة كصورة) عبر Gemini Vision."""
+"""قراءة نص صفحة صورية (سيرة ذاتية ممسوحة أو مصممة كصورة) عبر Gemini Vision (google-genai)."""
 
+import json
+
+from ai.key_rotator import get_next_key
 from config.settings import get_settings
 from core.exceptions import AIServiceError
 from core.logging import get_logger
-
-import json
 
 logger = get_logger(__name__)
 
@@ -15,25 +16,34 @@ _TRANSCRIBE_PROMPT = (
     "أعد النص فقط."
 )
 
+
+def _client():
+    """عميل genai مستقل لكل نداء - يستخدم المفتاح التالي في التبديل الدوري. آمن للتوازي."""
+    from google import genai
+
+    return genai.Client(api_key=get_next_key())
+
+
 def transcribe_image(image_bytes: bytes, mime_type: str = "image/png") -> str:
     """يرسل صورة لـ Gemini ويرجع النص المكتوب فيها. يرفع AIServiceError برسالة مفهومة عند الفشل."""
     settings = get_settings()
-    if not settings.gemini_api_key:
+    if not settings.gemini_api_key and not settings.alt_gemini_api_key:
         raise AIServiceError("قراءة الصفحات الصورية تحتاج GEMINI_API_KEY في ملف .env")
 
     try:
-        import google.generativeai as genai
+        from google.genai import types
     except ImportError as exc:
-        raise AIServiceError("مكتبة google-generativeai غير مثبّتة.") from exc
+        raise AIServiceError("مكتبة google-genai غير مثبّتة.") from exc
 
     try:
-        genai.configure(api_key=settings.gemini_api_key)
-        model = genai.GenerativeModel(
-            model_name=settings.ai_model,
-            generation_config={"temperature": 0.0, "max_output_tokens": 8192},
-        )
-        response = model.generate_content(
-            [_TRANSCRIBE_PROMPT, {"mime_type": mime_type, "data": image_bytes}]
+        client = _client()
+        response = client.models.generate_content(
+            model=settings.ai_model,
+            contents=[
+                _TRANSCRIBE_PROMPT,
+                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+            ],
+            config={"temperature": 0.0, "max_output_tokens": 8192},
         )
         text = (response.text or "").strip()
     except Exception as exc:
@@ -58,30 +68,31 @@ def _friendly_error(exc: Exception) -> str:
         return "رفض الذكاء الاصطناعي قراءة الصفحة (حُجب المحتوى). جرّب ملفاً آخر."
     return f"فشل قراءة الصفحة عبر Gemini: {exc}"
 
+
 def detect_face_box(image_bytes: bytes, mime_type: str = "image/png") -> tuple[float, float, float, float] | None:
     """
     يطلب من Gemini صندوق وجه الشخص الأبرز في الصورة.
     يرجع (x_min, y_min, x_max, y_max) كنسب من 0 إلى 1، أو None إن لم يوجد وجه أو فشل الطلب.
     """
     settings = get_settings()
-    if not settings.gemini_api_key:
+    if not settings.gemini_api_key and not settings.alt_gemini_api_key:
         return None
 
     try:
-        import google.generativeai as genai
+        from google.genai import types
 
-        genai.configure(api_key=settings.gemini_api_key)
-        model = genai.GenerativeModel(
-            model_name=settings.ai_model,
-            generation_config={"temperature": 0.0, "response_mime_type": "application/json"},
-        )
+        client = _client()
         prompt = (
             "حدد وجه الشخص الظاهر في صورته الشخصية داخل هذه الصفحة (إن وُجد). "
             'أعد JSON فقط بهذا الشكل: {"found": true, "box": [ymin, xmin, ymax, xmax]} '
             "حيث القيم أعداد صحيحة من 0 إلى 1000 نسبةً لأبعاد الصورة. "
             'وإن لم يوجد وجه أعد {"found": false}.'
         )
-        response = model.generate_content([prompt, {"mime_type": mime_type, "data": image_bytes}])
+        response = client.models.generate_content(
+            model=settings.ai_model,
+            contents=[prompt, types.Part.from_bytes(data=image_bytes, mime_type=mime_type)],
+            config={"temperature": 0.0, "response_mime_type": "application/json"},
+        )
         data = json.loads(response.text)
         if not data.get("found"):
             return None

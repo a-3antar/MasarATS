@@ -1,9 +1,11 @@
 """
-تكامل Gemini كمزوّد ذكاء اصطناعي.
+تكامل Gemini كمزوّد ذكاء اصطناعي، عبر مكتبة google-genai الجديدة.
 
-المرحلة الحالية: بدون أي rate limiting أو caching (كما طُلب صراحة) -
-كل نداء extract_structured يذهب مباشرة لـ Gemini. يمكن إضافة الحدين لاحقاً
-دون تغيير أي كود يستدعي هذه الخدمة (تُستدعى دائماً عبر الواجهة AIProvider).
+كل نداء فعلي لـ Gemini يبني عميل (Client) مستقل خاص به باستخدام مفتاح قادم من
+key_rotator.get_next_key() (تبديل دوري بين المفاتيح المتاحة) - لا توجد حالة
+مشتركة (global state) بين الـ Threads كما كان الحال مع genai.configure() القديمة.
+
+المرحلة الحالية: بدون أي rate limiting أو caching إضافي (كما طُلب صراحة).
 """
 
 import json
@@ -12,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from ai.base import AIProvider
+from ai.key_rotator import get_next_key
 from config.settings import get_settings
 from core.exceptions import AIServiceError
 from core.logging import get_logger
@@ -21,11 +24,9 @@ logger = get_logger(__name__)
 
 def _pydantic_to_gemini_schema(schema: type[BaseModel]) -> dict[str, Any]:
     """
-    يحوّل Pydantic model إلى مخطط يقبله google-generativeai.
-
-    مكتبة Gemini لا تدعم حقولاً يولّدها Pydantic مثل: default, title, $ref, $defs, anyOf.
-    لذلك نفكّ الـ $ref، ونحوّل anyOf [X, null] إلى X مع nullable=True،
-    ونحذف كل الحقول غير المدعومة، ونكتب الأنواع بأحرف كبيرة (STRING, OBJECT...).
+    يحوّل Pydantic model إلى مخطط يقبله google-genai (نفس بنية الحقول المدعومة
+    في response_schema التي كانت تُستخدم مع google-generativeai: type, properties,
+    items, required, enum, nullable - بأحرف كبيرة للأنواع STRING/OBJECT/ARRAY...).
     """
     json_schema = schema.model_json_schema()
     definitions: dict[str, Any] = json_schema.get("$defs", {})
@@ -63,43 +64,43 @@ def _pydantic_to_gemini_schema(schema: type[BaseModel]) -> dict[str, Any]:
 
 
 class GeminiService(AIProvider):
-    """مزوّد الذكاء الاصطناعي المعتمد على Google Gemini."""
+    """مزوّد الذكاء الاصطناعي المعتمد على Google Gemini (عبر google-genai)."""
 
     def __init__(self) -> None:
         settings = get_settings()
-        if not settings.gemini_api_key:
+        if not settings.gemini_api_key and not settings.alt_gemini_api_key:
             raise AIServiceError("لم يتم ضبط GEMINI_API_KEY في ملف .env")
 
         try:
-            import google.generativeai as genai
+            from google import genai
         except ImportError as exc:
-            raise AIServiceError("مكتبة google-generativeai غير مثبّتة.") from exc
+            raise AIServiceError("مكتبة google-genai غير مثبّتة.") from exc
 
         self._genai = genai
-        genai.configure(api_key=settings.gemini_api_key)
         self._settings = settings
+
+    def _client(self):
+        """عميل مستقل لكل نداء - يستخدم المفتاح التالي في التبديل الدوري. آمن للتوازي."""
+        return self._genai.Client(api_key=get_next_key())
 
     def extract_structured(self, text: str, schema: type[BaseModel]) -> BaseModel:
         from ai.prompts import CV_EXTRACTION_PROMPT_TEMPLATE
 
         raw_text = ""
         try:
-            # نبني الموديل هنا (وليس في __init__) لأن response_schema يعتمد على الـ schema
-            # الممرَّر لكل استدعاء. التحويل داخل try حتى لا يخرج أي خطأ خام للواجهة.
-            model = self._genai.GenerativeModel(
-                model_name=self._settings.ai_model,
-                generation_config={
+            client = self._client()
+            prompt = CV_EXTRACTION_PROMPT_TEMPLATE.format(cv_text=text[:15000])  # حد أمان لطول النص
+
+            response = client.models.generate_content(
+                model=self._settings.ai_model,
+                contents=prompt,
+                config={
                     "temperature": self._settings.ai_temperature,
                     "response_mime_type": "application/json",
                     "response_schema": _pydantic_to_gemini_schema(schema),
-                    # الحد الافتراضي قد يقطع الاستجابة في سير ذاتية طويلة
                     "max_output_tokens": 8192,
                 },
             )
-
-            prompt = CV_EXTRACTION_PROMPT_TEMPLATE.format(cv_text=text[:15000])  # حد أمان لطول النص
-
-            response = model.generate_content(prompt)
             raw_text = response.text
             raw_json = json.loads(raw_text)
             return schema.model_validate(raw_json)
@@ -119,19 +120,20 @@ class GeminiService(AIProvider):
 
         raw_text = ""
         try:
-            model = self._genai.GenerativeModel(
-                model_name=self._settings.ai_model,
-                generation_config={
+            client = self._client()
+            prompt = TRANSLATION_PROMPT_TEMPLATE.format(
+                language=target_language,
+                payload=json.dumps(data, ensure_ascii=False),
+            )
+            response = client.models.generate_content(
+                model=self._settings.ai_model,
+                contents=prompt,
+                config={
                     "temperature": 0.1,
                     "response_mime_type": "application/json",
                     "max_output_tokens": 8192,
                 },
             )
-            prompt = TRANSLATION_PROMPT_TEMPLATE.format(
-                language=target_language,
-                payload=json.dumps(data, ensure_ascii=False),
-            )
-            response = model.generate_content(prompt)
             raw_text = response.text
             result = json.loads(raw_text)
             if not isinstance(result, dict):
@@ -148,16 +150,17 @@ class GeminiService(AIProvider):
 
         raw_text = ""
         try:
-            model = self._genai.GenerativeModel(
-                model_name=self._settings.ai_model,
-                generation_config={
+            client = self._client()
+            response = client.models.generate_content(
+                model=self._settings.ai_model,
+                contents=NL_SEARCH_PROMPT_TEMPLATE.format(query=query[:1000]),
+                config={
                     "temperature": 0.0,
                     "response_mime_type": "application/json",
                     "response_schema": _pydantic_to_gemini_schema(CandidateSearchFilters),
                     "max_output_tokens": 1024,
                 },
             )
-            response = model.generate_content(NL_SEARCH_PROMPT_TEMPLATE.format(query=query[:1000]))
             raw_text = response.text
             return CandidateSearchFilters.model_validate(json.loads(raw_text))
         except ValidationError as exc:
@@ -174,19 +177,20 @@ class GeminiService(AIProvider):
 
         raw_text = ""
         try:
-            model = self._genai.GenerativeModel(
-                model_name=self._settings.ai_model,
-                generation_config={
+            client = self._client()
+            prompt = INTERVIEW_QUESTIONS_PROMPT_TEMPLATE.format(
+                job_text=job_text[:4000], candidate_text=candidate_text[:8000]
+            )
+            response = client.models.generate_content(
+                model=self._settings.ai_model,
+                contents=prompt,
+                config={
                     "temperature": self._settings.ai_temperature,
                     "response_mime_type": "application/json",
                     "response_schema": _pydantic_to_gemini_schema(InterviewQuestions),
                     "max_output_tokens": 4096,
                 },
             )
-            prompt = INTERVIEW_QUESTIONS_PROMPT_TEMPLATE.format(
-                job_text=job_text[:4000], candidate_text=candidate_text[:8000]
-            )
-            response = model.generate_content(prompt)
             raw_text = response.text
             return InterviewQuestions.model_validate(json.loads(raw_text))
         except ValidationError as exc:

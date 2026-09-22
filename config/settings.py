@@ -6,6 +6,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -28,11 +29,13 @@ class Settings(BaseSettings):
     # قاعدة البيانات
     database_url: str = f"sqlite:///{BASE_DIR / 'data' / 'smartats.db'}"
 
-    # الذكاء الاصطناعي (سيُستخدم في مرحلة لاحقة)
+    # الذكاء الاصطناعي
     gemini_api_key: str = ""
+    # مفتاح ثانٍ اختياري للتبديل الدوري (round-robin) بين مفتاحين لتوزيع الحمل
+    # وتفادي تجاوز حدود الحصة عند المعالجة المتوازية لعدة سير ذاتية.
+    alt_gemini_api_key: str = Field(default="", validation_alias="ALT_GEMINI_KEY")
     ai_model: str = "gemini-flash-lite-latest"
     ai_temperature: float = 0.2
-
 
     @property
     def is_development(self) -> bool:
