@@ -53,4 +53,10 @@ INTERVIEW_STATUSES: list[str] = ["Scheduled", "Completed", "Cancelled"]
 # التحليل الخلفي بالذكاء الاصطناعي
 AI_BACKGROUND_WORKERS: int = 2   # عدد التحليلات المتزامنة في الخلفية (حماية لحصة Gemini)
 
-_MAX_WORKERS = 6
+MAX_WORKERS = 6    # أقصى عدد عمليات متزامنة (مجموع كل الخلفيات: الصور + التحليل + غيرها)
+
+SCANNED_AVG_CHARS_PER_PAGE: int = 200   # متوسط أحرف أقل من هذا → PDF ممسوح
+AI_RETRY_MAX_ATTEMPTS: int = 4
+AI_RETRY_BASE_SECONDS: float = 4.0      # الانتظار: 4 ثم 8 ثم 16 ثانية (+ jitter)
+ANALYSIS_PENDING, ANALYSIS_DONE, ANALYSIS_FAILED = "pending", "done", "failed"
+PHOTO_BACKGROUND_WORKERS: int = 2

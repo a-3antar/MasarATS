@@ -62,20 +62,18 @@ class Candidate(Base):
     expected_salary: Mapped[float | None] = mapped_column(Float, nullable=True)
     notice_period_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     recruiter_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-
     # ترجمات البيانات: {"ar": {"summary": "...", "soft_skills": [...], ...}} - الأصل يبقى بالإنجليزية
     translations: Mapped[dict] = mapped_column(JSON, default=dict, nullable=True)
-
     # بيانات المستند الأصلي
     source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     file_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-
     # تتبع تحليل الذكاء الاصطناعي
     ai_analyzed: Mapped[bool] = mapped_column(default=False)
         # نتيجة تحليل الذكاء الاصطناعي مخزّنة (كاش) لتفادي إعادة الاستدعاء - القسم 28 (AI Cost Optimization)
     ai_analysis: Mapped[dict] = mapped_column(JSON, default=dict, nullable=True)
-    
+    analysis_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # pending / done / failed
+    analysis_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
     @property

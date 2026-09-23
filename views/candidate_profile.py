@@ -35,6 +35,8 @@ _NOT_MENTIONED = "غير مذكور في السيرة الذاتية"
 _TOP_JOBS_COUNT = 5
 _MAX_SUITABLE_JOBS = 5
 
+_POLL_SECONDS = 3
+
 # مدة الكاش لنتيجة "الوظائف المناسبة" - هذا الحساب كان يُعاد تشغيله بالكامل
 # (مقابل كل وظيفة مفتوحة) في كل مرة يُفتح فيها تبويب المرشح، وهو أكبر سبب لبطء
 # التنقل بين المرشحين في صفحة "المرشحون".
@@ -279,32 +281,51 @@ def _render_card(candidate: Candidate, photo_path, lang: str) -> None:
 
     st.caption(f"📎 المصدر: {candidate.source_filename or 'إدخال يدوي'}")
     st.divider()
-    _render_ai_analysis(candidate)
+    _render_ai_analysis(candidate.id)
 
-def _render_ai_analysis(candidate: Candidate) -> None:
+
+
+def _render_ai_analysis(candidate_id: int) -> None:
     st.markdown("**🤖 تحليل الذكاء الاصطناعي**")
-    analysis = candidate.ai_analysis or {}
+    polling = background_analysis.is_pending(candidate_id)
+    # التحديث الدوري يعمل فقط أثناء الانتظار، وعند الانتهاء نعيد تشغيل الصفحة لإيقافه
+    st.fragment(_analysis_panel, run_every=_POLL_SECONDS if polling else None)(candidate_id, polling)
 
-    if background_analysis.is_pending(candidate.id):
-        st.info("⏳ جاري تحليل الذكاء الاصطناعي في الخلفية، يمكنك متابعة عملك.")
-        if st.button("🔄 تحديث", key=f"analysis_refresh_{candidate.id}"):
-            st.rerun()
+
+def _analysis_panel(candidate_id: int, polling: bool) -> None:
+    with get_db_session() as session:
+        candidate = CandidateService(session).get_by_id(candidate_id)
+    if candidate is None:
+        return
+
+    in_memory = background_analysis.is_pending(candidate_id)
+    if polling and not in_memory:
+        st.rerun()
+
+    analysis = candidate.ai_analysis or {}
+    status, error = candidate.analysis_status, candidate.analysis_error
+    if status == "pending" and not in_memory:  # بقيت pending بعد إعادة تشغيل التطبيق
+        status, error = "failed", "انقطعت المعالجة قبل اكتمالها. أعد التحليل."
+
+    if in_memory:
+        st.info("⏳ جاري التحليل في الخلفية (يتحدث تلقائياً).")
     else:
-        button_label = "🔄 إعادة التحليل" if analysis else "🤖 توليد التحليل"
-        if not analysis:
+        if status == "failed":
+            st.error(f"❌ فشل التحليل: {error or 'سبب غير معروف'}")
+        elif not analysis:
             st.caption("لم يتم توليد تحليل الذكاء الاصطناعي لهذا المرشح بعد.")
-        if st.button(button_label, key=f"analysis_btn_{candidate.id}"):
+        label = "🔄 إعادة التحليل" if analysis else "🤖 توليد التحليل"
+        if st.button(label, key=f"analysis_btn_{candidate_id}"):
             try:
                 with st.spinner("جاري التحليل..."):
                     with get_db_session() as session:
-                        CandidateService(session).generate_ai_analysis(candidate.id)
+                        CandidateService(session).generate_ai_analysis(candidate_id, force=bool(analysis))
                 st.rerun()
             except SmartATSError as exc:
                 st.error(str(exc))
 
     if not analysis:
         return
-
     if analysis.get("career_level"):
         st.write(f"📈 المستوى الوظيفي: **{analysis['career_level']}**")
     if analysis.get("strengths"):
@@ -318,6 +339,9 @@ def _render_ai_analysis(candidate: Candidate) -> None:
     if analysis.get("suitable_functions"):
         st.markdown("**الأقسام/الوظائف المناسبة:**")
         st.markdown(_tags(analysis["suitable_functions"]))
+    meta = analysis.get("meta") or {}
+    if meta:
+        st.caption(f" {meta.get('created_at', '')[:16]}")
 
 def _render_edit_form(candidate: Candidate, photo_path) -> None:
     cid = candidate.id

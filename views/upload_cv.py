@@ -12,7 +12,7 @@ from database.database import get_db_session
 from views import candidate_profile
 from services.candidate_service import CandidateService
 from services import background_analysis
-from core.constants import _MAX_WORKERS
+from core.constants import MAX_WORKERS
 
 # مفتاح حفظ نتائج الرفع في session_state حتى لا تختفي البطاقات عند أي rerun (مثل حفظ تعديل)
 _RESULTS_KEY = "upload_cv_results"
@@ -31,6 +31,7 @@ def _process_one(tmp_path: str, filename: str) -> dict:
             "id": candidate.id,
             "name": candidate.full_name,
             "warning": getattr(candidate, "duplicate_warning", None),
+            "face_image": getattr(candidate,"pending_face_image", None),
         }
     except DuplicateCandidateError as exc:
         return {"ok": False, "duplicate": True, "filename": filename, "message": str(exc)}
@@ -92,7 +93,7 @@ def render() -> None:
         completed, errors, done = 0, 0, 0
         new_results: list[dict] = []
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, total)) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(MAX_WORKERS, total)) as executor:
             futures = [executor.submit(_process_one, path, name) for path, name in tmp_jobs]
             for future in concurrent.futures.as_completed(futures):
                 result = future.result()
@@ -101,10 +102,11 @@ def render() -> None:
                 if result["ok"]:
                     new_results.append(
                         {
-                            "id": result["id"],
-                            "name": result["name"],
-                            "filename": result["filename"],
-                            "warning": result["warning"],
+                            "id"        : result["id"],
+                            "name"      : result["name"],
+                            "filename"  : result["filename"],
+                            "warning"   : result["warning"],
+                            "face_image": result["face_image"],
                         }
                     )
                     completed += 1
@@ -120,6 +122,7 @@ def render() -> None:
         # الآن فقط نبدأ التحليل الشامل في الخلفية، فلا ينافس الاستخلاص على حصة Gemini
         for item in new_results:
             background_analysis.submit(item["id"])
+            background_analysis.submit_photo(item["id"], item.pop("face_image", None))  # لا نخزّن الصور في session_state
 
         st.session_state[_RESULTS_KEY] = new_results
         st.info(

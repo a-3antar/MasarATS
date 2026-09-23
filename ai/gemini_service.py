@@ -21,6 +21,10 @@ from core.logging import get_logger
 
 logger = get_logger(__name__)
 
+_ATTACHED_FILE_NOTE = (
+        "(السيرة الذاتية مرفقة كملف مع هذا الطلب. اقرأ نصها مباشرة بما في ذلك الصفحات الممسوحة، "
+        "وإذا كان التصميم بعمودين فاقرأ كل عمود كاملاً، ثم استخرج البيانات.)"
+    )
 
 def _pydantic_to_gemini_schema(schema: type[BaseModel]) -> dict[str, Any]:
     """
@@ -83,17 +87,29 @@ class GeminiService(AIProvider):
         """عميل مستقل لكل نداء - يستخدم المفتاح التالي في التبديل الدوري. آمن للتوازي."""
         return self._genai.Client(api_key=get_next_key())
 
+   
+
     def extract_structured(self, text: str, schema: type[BaseModel]) -> BaseModel:
         from ai.prompts import CV_EXTRACTION_PROMPT_TEMPLATE
 
+        prompt = CV_EXTRACTION_PROMPT_TEMPLATE.format(cv_text=text[:15000])
+        return self._extract(prompt, schema)
+
+    def extract_structured_from_file(self, data: bytes, mime_type: str, schema: type[BaseModel]) -> BaseModel:
+        """نسخ + استخلاص في نداء واحد: Gemini يقرأ الـ PDF/الصورة مباشرة."""
+        from google.genai import types
+        from ai.prompts import CV_EXTRACTION_PROMPT_TEMPLATE
+
+        prompt = CV_EXTRACTION_PROMPT_TEMPLATE.format(cv_text=_ATTACHED_FILE_NOTE)
+        return self._extract([prompt, types.Part.from_bytes(data=data, mime_type=mime_type)], schema)
+
+    def _extract(self, contents, schema: type[BaseModel]) -> BaseModel:
         raw_text = ""
         try:
             client = self._client()
-            prompt = CV_EXTRACTION_PROMPT_TEMPLATE.format(cv_text=text[:15000])  # حد أمان لطول النص
-
             response = client.models.generate_content(
                 model=self._settings.ai_model,
-                contents=prompt,
+                contents=contents,
                 config={
                     "temperature": self._settings.ai_temperature,
                     "response_mime_type": "application/json",
@@ -102,13 +118,10 @@ class GeminiService(AIProvider):
                 },
             )
             raw_text = response.text
-            raw_json = json.loads(raw_text)
-            return schema.model_validate(raw_json)
+            return schema.model_validate(json.loads(raw_text))
         except ValidationError as exc:
-            logger.error(
-                "Gemini returned data that failed schema validation: %s | raw_response=%s",
-                exc, raw_text[:2000],
-            )
+            logger.error("Gemini returned data that failed schema validation: %s | raw_response=%s",
+                         exc, raw_text[:2000])
             raise AIServiceError("استجابة الذكاء الاصطناعي لم تطابق الشكل المتوقع.") from exc
         except Exception as exc:
             logger.error("Gemini call failed: %s | raw_response=%s", exc, raw_text[:2000])

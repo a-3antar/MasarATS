@@ -4,7 +4,8 @@ from ai.schemas import CandidateAnalysis
 from models.candidate import Candidate
 
 
-def _candidate_context(candidate: Candidate) -> str:
+def candidate_context(candidate: Candidate) -> str:
+    """نص بيانات المرشح المُرسل للنموذج. يُستخدم أيضاً لحساب input_hash للكاش."""
     parts = [f"الاسم: {candidate.full_name}"]
     if candidate.current_position:
         parts.append(f"المسمى الحالي: {candidate.current_position}")
@@ -28,8 +29,8 @@ def _candidate_context(candidate: Candidate) -> str:
     return "\n".join(parts)
 
 
-def analyze_candidate(candidate: Candidate) -> CandidateAnalysis:
-    """يولّد تحليل الذكاء الاصطناعي الشامل لمرشح. يرفع AIServiceError عند الفشل."""
+def analyze_candidate(context: str) -> CandidateAnalysis:
+    """يولّد تحليل الذكاء الاصطناعي من نص بيانات المرشح الجاهز. يرفع AIServiceError عند الفشل."""
     from ai.gemini_service import GeminiService
 
-    return GeminiService().analyze_candidate(_candidate_context(candidate))
+    return GeminiService().analyze_candidate(context)

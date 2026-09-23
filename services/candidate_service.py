@@ -21,6 +21,7 @@ from core.constants import (
     MAX_CV_FILE_SIZE_MB,
     PHOTO_MAX_SIDE_PX,
     PHOTOS_SUBDIR,
+    ANALYSIS_DONE,
 )
 from core.exceptions import AIServiceError, DuplicateCandidateError, ValidationError
 from core.logging import get_logger
@@ -32,6 +33,9 @@ from services.duplicate_detector import DuplicateDetector
 
 from concurrent.futures import ThreadPoolExecutor
 
+import time 
+from datetime import datetime, timezone
+from ai.retry import call_with_retry
 
 logger = get_logger(__name__)
 
@@ -87,25 +91,28 @@ class CandidateService:
             raise DuplicateCandidateError(f"هذا الملف مرفوع مسبقاً للمرشح: {existing.full_name}")
 
         parser = DocumentParserFactory.get_parser(file_path)
-        raw_text = parser.extract_text(file_path)
+        scanned = self._ai_available() and parser.is_scanned(file_path)
+        raw_text = "" if scanned else parser.extract_text(file_path)
 
         with ThreadPoolExecutor(max_workers=1) as photo_executor:
-            photo_future = photo_executor.submit(parser.extract_photo, file_path)
+            photo_future = photo_executor.submit(self._locate_photo, parser, file_path)
 
-            profile = self._extract_profile(raw_text, fallback_name=Path(original_filename).stem)
-            full_name = profile.full_name or Path(original_filename).stem
+            fallback_name = Path(original_filename).stem
+            if scanned:
+                profile, raw_text = self._extract_profile_from_file(file_path, parser, fallback_name)
+            else:
+                profile = self._extract_profile(raw_text, fallback_name)
+            full_name = profile.full_name or fallback_name
 
             matches = self._duplicates.find_duplicates(
-                full_name=full_name,
-                email=profile.email,
-                phone=profile.phone,
-                linkedin_url=profile.linkedin_url,
+                full_name=full_name, email=profile.email,
+                phone=profile.phone, linkedin_url=profile.linkedin_url,
             )
             strong = next((m for m in matches if m.is_strong), None)
             if strong is not None:
                 raise DuplicateCandidateError(f"مرشح مكرر: {strong.describe()}")
 
-            photo = photo_future.result()
+            photo, page_png = photo_future.result()
 
         candidate = Candidate(
             full_name=full_name,
@@ -134,7 +141,7 @@ class CandidateService:
             status="New",
             source_filename=original_filename,
             file_hash=file_hash,
-            raw_text=raw_text,
+            raw_text=raw_text or None,
             ai_analyzed=self._ai_available(),
         )
         self._candidates.add(candidate)
@@ -144,6 +151,7 @@ class CandidateService:
         candidate.duplicate_warning = " | ".join(m.describe() for m in matches) or None
 
         logger.info("Candidate created from CV upload: %s (%s)", candidate.full_name, original_filename)
+        candidate.pending_face_image = page_png  # سمة مؤقتة: تُسلَّم للخلفية بعد الـ commit
         return candidate
 
     def _extract_profile(self, raw_text: str, fallback_name: str) -> CandidateProfile:
@@ -363,11 +371,62 @@ class CandidateService:
     def search(self, query: str) -> list[Candidate]:
         return self._candidates.search(query) if query else self._candidates.list_all()
 
-    def generate_ai_analysis(self, candidate_id: int) -> dict:
-        """يولّد تحليل الذكاء الاصطناعي الشامل للمرشح ويخزّنه (كاش) في عمود ai_analysis. يرفع AIServiceError عند الفشل."""
-        from ai.analyzer import analyze_candidate
+    def generate_ai_analysis(self, candidate_id: int, *, force: bool = False, retry: bool = False) -> dict:
+        """
+        يولّد التحليل ويخزّنه. لا يستدعي Gemini إلا إذا تغيّر input_hash أو model أو prompt_version
+        (أو force=True). retry=True للخلفية فقط (انتظار متزايد عند 429).
+        """
+        from ai.analyzer import analyze_candidate, candidate_context
+        from ai.prompts import CV_ANALYSIS_PROMPT_VERSION
 
         candidate = self._get_or_raise(candidate_id)
-        analysis = analyze_candidate(candidate)
-        candidate.ai_analysis = analysis.model_dump()
+        context = candidate_context(candidate)
+        input_hash = hashlib.sha256(context.encode("utf-8")).hexdigest()
+        model = get_settings().ai_model
+
+        meta = (candidate.ai_analysis or {}).get("meta") or {}
+        if (
+            not force
+            and meta.get("input_hash") == input_hash
+            and meta.get("model") == model
+            and meta.get("prompt_version") == CV_ANALYSIS_PROMPT_VERSION
+        ):
+            candidate.analysis_status, candidate.analysis_error = ANALYSIS_DONE, None
+            return candidate.ai_analysis
+
+        started = time.perf_counter()
+        call = lambda: analyze_candidate(context)  # noqa: E731
+        analysis = call_with_retry(call) if retry else call()
+
+        candidate.ai_analysis = {
+            **analysis.model_dump(),
+            "meta": {
+                "input_hash": input_hash,
+                "model": model,
+                "prompt_version": CV_ANALYSIS_PROMPT_VERSION,
+                "processing_seconds": round(time.perf_counter() - started, 2),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+        candidate.ai_analyzed = True
+        candidate.analysis_status, candidate.analysis_error = ANALYSIS_DONE, None
         return candidate.ai_analysis
+
+    @staticmethod
+    def _locate_photo(parser, file_path: str) -> tuple[tuple[bytes, str] | None, bytes | None]:
+        """صورة مستقلة إن وُجدت (سريع). وإلا نرجع صورة الصفحة لاكتشاف الوجه لاحقاً في الخلفية."""
+        photo = parser.extract_photo(file_path)
+        return photo, (None if photo else parser.render_first_page_png(file_path))
+
+    def _extract_profile_from_file(self, file_path: str, parser, fallback_name: str) -> tuple[CandidateProfile, str]:
+        """نداء واحد: Gemini يقرأ الملف مباشرة. عند فشله نرجع للمسار القديم (Vision لكل صفحة)."""
+        try:
+            from ai.gemini_service import GeminiService
+
+            data = Path(file_path).read_bytes()
+            profile = GeminiService().extract_structured_from_file(data, "application/pdf", CandidateProfile)
+            return profile, ""  # type: ignore[return-value]
+        except AIServiceError as exc:
+            logger.warning("Direct file extraction failed, using legacy path: %s", exc)
+            raw_text = parser.extract_text(file_path)
+            return self._extract_profile(raw_text, fallback_name), raw_text

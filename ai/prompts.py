@@ -106,3 +106,5 @@ JOB_ANALYSIS_PROMPT_TEMPLATE = """أنت خبير توظيف تُحوّل وصف
 {description}
 ---
 """
+# ai/prompts.py: غيّر الرقم عند أي تعديل على نص CV_ANALYSIS_PROMPT_TEMPLATE ليُعاد التحليل تلقائياً
+CV_ANALYSIS_PROMPT_VERSION = "CV_ANALYSIS_PROMPT_V1"

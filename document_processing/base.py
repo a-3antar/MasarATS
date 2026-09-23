@@ -121,3 +121,11 @@ class DocumentParser(ABC):
     def extract_photo(self, file_path: str) -> tuple[bytes, str] | None:
         """استخراج صورة المرشح (بيانات، امتداد) إن وُجدت. الافتراضي: لا توجد صورة."""
         return None
+
+    def is_scanned(self, file_path: str) -> bool:
+        """هل الملف صفحات صورية تحتاج قراءة بصرية؟ الافتراضي: لا."""
+        return False
+
+    def render_first_page_png(self, file_path: str) -> bytes | None:
+        """صورة الصفحة الأولى (للبحث عن الوجه لاحقاً في الخلفية). الافتراضي: لا شيء."""
+        return None

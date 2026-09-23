@@ -3,6 +3,7 @@
 from ai.vision import transcribe_image
 from core.constants import (
     OCR_DPI,
+    SCANNED_AVG_CHARS_PER_PAGE,
     OCR_MAX_views,
     OCR_MIN_CHARS_PER_PAGE,
     PHOTO_MAX_PAGE_COVERAGE,
@@ -10,7 +11,7 @@ from core.constants import (
 )
 from core.exceptions import AIServiceError, DocumentParsingError
 from core.logging import get_logger
-from document_processing.base import DocumentParser, PhotoCandidate, crop_face_from_image, pick_best_photo
+from document_processing.base import DocumentParser, PhotoCandidate,  pick_best_photo
 
 logger = get_logger(__name__)
 
@@ -97,9 +98,7 @@ class PDFParser(DocumentParser):
                 if standalone:
                     return standalone
 
-                # لا توجد صورة مستقلة: نقصّ الوجه من صورة الصفحة الأولى
-                pixmap = first_page.get_pixmap(dpi=200)
-                return crop_face_from_image(pixmap.tobytes("png"))
+
         except Exception as exc:
             logger.warning("Photo extraction from PDF failed: %s", exc)
             return None
@@ -113,3 +112,25 @@ class PDFParser(DocumentParser):
         # الصور الشخصية عادة أصغر بكثير من الصفحة؛ الصورة ذات شكل الصفحة وبأبعاد كبيرة هي صفحة كاملة
         large = width >= page.rect.width * PHOTO_MAX_PAGE_COVERAGE and height >= page.rect.height * PHOTO_MAX_PAGE_COVERAGE
         return similar_shape and large
+
+    def is_scanned(self, file_path: str) -> bool:
+        try:
+            import pymupdf as fitz
+            with fitz.open(file_path) as document:
+                pages = len(document)
+                if not pages:
+                    return False
+                chars = sum(len(page.get_text().strip()) for page in document)
+            return chars / pages < SCANNED_AVG_CHARS_PER_PAGE
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Scanned check failed: %s", exc)
+            return False
+
+    def render_first_page_png(self, file_path: str) -> bytes | None:
+        try:
+            import pymupdf as fitz
+            with fitz.open(file_path) as document:
+                return document[0].get_pixmap(dpi=200).tobytes("png")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("First page render failed: %s", exc)
+            return None
