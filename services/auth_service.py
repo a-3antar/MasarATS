@@ -108,13 +108,19 @@ class AuthService:
         user = self._users.get_by_id(user_id)
         if user is None or not user.is_active or not user.remember_token_hash:
             return None
-        if user.remember_token_expires and user.remember_token_expires < datetime.now(timezone.utc):
-            return None
+
+        expires = user.remember_token_expires
+        if expires is not None:
+            # SQLite لا يخزّن معلومة المنطقة الزمنية فعلياً حتى لو كان العمود DateTime(timezone=True)،
+            # فقد يعود التاريخ بدون tzinfo (naive) رغم أنه كان aware عند الحفظ. نطبّعه هنا كـ UTC
+            # قبل المقارنة لتفادي TypeError: can't compare offset-naive and offset-aware datetimes.
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            if expires < datetime.now(timezone.utc):
+                return None
+
         if not verify_password(token, user.remember_token_hash):
             return None
-
-        user.last_login_at = datetime.now(timezone.utc)
-        return user
 
     def clear_remember_token(self, user_id: int) -> None:
         """إبطال توكن "تذكرني" الحالي (تسجيل الخروج الكامل، أو عند الاشتباه بمشكلة أمنية)."""

@@ -52,15 +52,17 @@ def _set_remember_cookies(user_id: int, token: str) -> None:
     if not _COOKIES_AVAILABLE:
         return
     max_age = REMEMBER_TOKEN_DAYS * 24 * 3600
-    _cookies.set(_COOKIE_UID, str(user_id), max_age=max_age)
-    _cookies.set(_COOKIE_TOKEN, token, max_age=max_age)
+    # لازم key مختلف لكل نداء set() - بدونه ينادَى المكوّن مرتين بنفس الهوية
+    # في نفس التشغيل، فيُكتب آخر نداء فقط ويُفقد الأول (وهذا ما كان يحدث مع smartats_uid).
+    _cookies.set(_COOKIE_UID, str(user_id), max_age=max_age, key="set_smartats_uid")
+    _cookies.set(_COOKIE_TOKEN, token, max_age=max_age, key="set_smartats_rtoken")
 
 
 def _clear_remember_cookies() -> None:
     if not _COOKIES_AVAILABLE:
         return
-    _cookies.remove(_COOKIE_UID)
-    _cookies.remove(_COOKIE_TOKEN)
+    _cookies.remove(_COOKIE_UID, key="remove_smartats_uid")
+    _cookies.remove(_COOKIE_TOKEN, key="remove_smartats_rtoken")
 
 
 def _apply_pending_remember_cookie() -> None:
@@ -75,13 +77,27 @@ def _apply_pending_remember_cookie() -> None:
         _set_remember_cookies(*pending)
 
 
+_COOKIES_RETRY_KEY = "_cookies_retry_done"
+
+
 def _try_auto_login() -> None:
     """يحاول تسجيل الدخول تلقائياً من كوكيز "تذكرني" إن وُجدت وكانت صالحة."""
     if not _COOKIES_AVAILABLE or st.session_state.get("user") is not None:
         return
 
-    uid = _cookies.get(_COOKIE_UID)
-    token = _cookies.get(_COOKIE_TOKEN)
+    # عند فتح التطبيق من جديد (تبويب جديد)، قد لا يكون مكوّن الكوكيز قد أكمل تحميله بعد
+    # في هذا التشغيل الأول، فتُقرأ القيم كـ None رغم وجودها فعلياً في المتصفح.
+    # getAll() ترجع None طالما المكوّن لم يُزامن بعد (بخلاف {} التي تعني "لا توجد كوكيز إطلاقاً").
+    # نعطيه محاولة إعادة تشغيل واحدة فقط لتفادي حلقة لا نهائية.
+    all_cookies = _cookies.getAll()
+    if all_cookies is None:
+        if not st.session_state.get(_COOKIES_RETRY_KEY):
+            st.session_state[_COOKIES_RETRY_KEY] = True
+            st.rerun()
+        return
+
+    uid = all_cookies.get(_COOKIE_UID)
+    token = all_cookies.get(_COOKIE_TOKEN)
     if not uid or not token:
         return
 
