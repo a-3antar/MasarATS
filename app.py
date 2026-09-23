@@ -10,6 +10,8 @@ SmartATS AI - نقطة الدخول الرئيسية.
 مباشرة — كل ذلك يمر عبر services/auth_service.py كما تنص المعمارية.
 """
 
+import time
+import json
 import streamlit as st
 
 from core.enums import UserRole
@@ -32,52 +34,61 @@ _bootstrap()
 
 
 # ---------------------------------------------------------- كوكيز "تذكرني"
-# نستخدم مكتبة streamlit-cookies-controller (pip install streamlit-cookies-controller).
-# لو غير مثبّتة، يستمر التطبيق بالعمل بشكل طبيعي لكن بدون خاصية "تذكرني".
+# streamlit-cookies-controller uses a Streamlit component internally.
+# Keep ONE controller instance per Streamlit session and use ONE cookie
+# for the complete remember-me payload. This avoids component state
+# collisions when setting two cookies in the same run.
 try:
     from streamlit_cookies_controller import CookieController
 
-    _cookies = CookieController()
+    # Use a dedicated component key. The package itself stores its cookie
+    # cache in st.session_state under this key.
+    _cookies = CookieController(key="smartats_cookie_controller")
     _COOKIES_AVAILABLE = True
 except ImportError:
     _cookies = None
     _COOKIES_AVAILABLE = False
 
-_COOKIE_UID = "smartats_uid"
-_COOKIE_TOKEN = "smartats_rtoken"
-_PENDING_REMEMBER_KEY = "_pending_remember"  # (user_id, token) بانتظار كتابتها في الكوكيز
+_COOKIE_AUTH = "smartats_auth"
+_PENDING_REMEMBER_KEY = "_pending_remember"
 
 
-def _set_remember_cookies(user_id: int, token: str) -> None:
+def _set_remember_cookie(user_id: int, token: str) -> None:
     if not _COOKIES_AVAILABLE:
         return
+
     max_age = REMEMBER_TOKEN_DAYS * 24 * 3600
-    # لازم key مختلف لكل نداء set() - بدونه ينادَى المكوّن مرتين بنفس الهوية
-    # في نفس التشغيل، فيُكتب آخر نداء فقط ويُفقد الأول (وهذا ما كان يحدث مع smartats_uid).
-    _cookies.set(_COOKIE_UID, str(user_id), max_age=max_age, key="set_smartats_uid")
-    _cookies.set(_COOKIE_TOKEN, token, max_age=max_age, key="set_smartats_rtoken")
+    payload = json.dumps(
+        {"uid": int(user_id), "token": token},
+        separators=(",", ":"),
+    )
+
+    _cookies.set(_COOKIE_AUTH, payload, max_age=max_age)
 
 
-def _clear_remember_cookies() -> None:
+def _clear_remember_cookie() -> None:
     if not _COOKIES_AVAILABLE:
         return
-    _cookies.remove(_COOKIE_UID, key="remove_smartats_uid")
-    _cookies.remove(_COOKIE_TOKEN, key="remove_smartats_rtoken")
+
+    _cookies.remove(_COOKIE_AUTH)
 
 
 def _apply_pending_remember_cookie() -> None:
     """
-    يضبط كوكيز "تذكرني" الفعلية إن كانت مُجدولة من عملية دخول سابقة.
-    تُنفَّذ عمداً في تشغيل منفصل (وليس في نفس تشغيل تسجيل الدخول الذي يليه st.rerun())،
-    لأن مكوّن الكوكيز (streamlit-cookies-controller) يحتاج دورة عرض كاملة لتنفيذ
-    الجافاسكربت الخاص به قبل أي rerun آخر - وإلا لا تُكتب الكوكيز في المتصفح فعلياً.
+    Apply a pending remember-me cookie in a separate Streamlit run.
+    The cookie component needs time to send the browser-side JavaScript
+    operation before another rerun occurs.
     """
     pending = st.session_state.pop(_PENDING_REMEMBER_KEY, None)
     if pending:
-        _set_remember_cookies(*pending)
+        _set_remember_cookie(*pending)
+        # Give the browser/component a chance to commit the cookie, then
+        # restart immediately. This prevents _try_auto_login() from calling
+        # refresh() in the same run and creating the same component key twice.
+        time.sleep(0.5)
+        st.rerun()
 
 
-_COOKIES_RETRY_KEY = "_cookies_retry_done"
 
 
 def _try_auto_login() -> None:
@@ -90,20 +101,28 @@ def _try_auto_login() -> None:
     # getAll() ترجع None طالما المكوّن لم يُزامن بعد (بخلاف {} التي تعني "لا توجد كوكيز إطلاقاً").
     # نعطيه محاولة إعادة تشغيل واحدة فقط لتفادي حلقة لا نهائية.
     all_cookies = _cookies.getAll()
-    if all_cookies is None:
-        if not st.session_state.get(_COOKIES_RETRY_KEY):
-            st.session_state[_COOKIES_RETRY_KEY] = True
-            st.rerun()
-        return
 
-    uid = all_cookies.get(_COOKIE_UID)
-    token = all_cookies.get(_COOKIE_TOKEN)
-    if not uid or not token:
+    # On a brand-new browser session the component may initially have an
+    # empty cache. Refresh the component cache once before deciding that
+    # there is no remember-me cookie.
+    if not all_cookies:
+        _cookies.refresh()
+        all_cookies = _cookies.getAll()
+
+    raw_auth = all_cookies.get(_COOKIE_AUTH)
+    if not raw_auth:
         return
 
     try:
+        payload = json.loads(raw_auth)
+        uid = int(payload["uid"])
+        token = str(payload["token"])
+
+        if not uid or not token:
+            return
+
         with get_db_session() as session:
-            user = AuthService(session).authenticate_by_token(int(uid), token)
+            user = AuthService(session).authenticate_by_token(uid, token)
             if user is not None:
                 st.session_state.user = {
                     "id": user.id,
@@ -111,9 +130,12 @@ def _try_auto_login() -> None:
                     "full_name": user.full_name,
                     "role": user.role,
                 }
-    except (ValueError, SmartATSError):
-        # كوكيز تالفة أو مستخدم غير صالح - نتجاهلها بصمت ونطلب تسجيل دخول عادي
-        _clear_remember_cookies()
+            else:
+                _clear_remember_cookie()
+
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError, SmartATSError):
+        # Cookie is invalid or the remember token is no longer valid.
+        _clear_remember_cookie()
 
 
 def _init_session_state() -> None:
@@ -231,7 +253,7 @@ def _authenticated_view() -> None:
         selected_page = st.radio("التنقل", list(views.keys()), label_visibility="collapsed")
         st.divider()
         if st.button("تسجيل الخروج", width='stretch'):
-            _clear_remember_cookies()
+            _clear_remember_cookie()
             st.session_state.user = None
             st.rerun()
 
