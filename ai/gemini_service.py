@@ -227,3 +227,31 @@ class GeminiService(AIProvider):
         except Exception as exc:
             logger.error("Gemini candidate analysis failed: %s | raw_response=%s", exc, raw_text[:2000])
             raise AIServiceError(f"فشل تحليل المرشح: {exc}") from exc
+
+    def analyze_job_description(self, description: str):
+        """يحوّل وصف وظيفة غير منظم إلى متطلبات مهيكلة (JobRequirements). يرفع AIServiceError عند الفشل."""
+        from ai.prompts import JOB_ANALYSIS_PROMPT_TEMPLATE
+        from ai.schemas import JobRequirements
+
+        raw_text = ""
+        try:
+            client = self._client()
+            prompt = JOB_ANALYSIS_PROMPT_TEMPLATE.format(description=description[:6000])
+            response = client.models.generate_content(
+                model=self._settings.ai_model,
+                contents=prompt,
+                config={
+                    "temperature": self._settings.ai_temperature,
+                    "response_mime_type": "application/json",
+                    "response_schema": _pydantic_to_gemini_schema(JobRequirements),
+                    "max_output_tokens": 4096,
+                },
+            )
+            raw_text = response.text
+            return JobRequirements.model_validate(json.loads(raw_text))
+        except ValidationError as exc:
+            logger.error("Job requirements failed validation: %s | raw_response=%s", exc, raw_text[:2000])
+            raise AIServiceError("استجابة الذكاء الاصطناعي لم تطابق الشكل المتوقع.") from exc
+        except Exception as exc:
+            logger.error("Gemini job analysis failed: %s | raw_response=%s", exc, raw_text[:2000])
+            raise AIServiceError(f"فشل تحليل وصف الوظيفة: {exc}") from exc

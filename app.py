@@ -45,6 +45,7 @@ except ImportError:
 
 _COOKIE_UID = "smartats_uid"
 _COOKIE_TOKEN = "smartats_rtoken"
+_PENDING_REMEMBER_KEY = "_pending_remember"  # (user_id, token) بانتظار كتابتها في الكوكيز
 
 
 def _set_remember_cookies(user_id: int, token: str) -> None:
@@ -60,6 +61,18 @@ def _clear_remember_cookies() -> None:
         return
     _cookies.remove(_COOKIE_UID)
     _cookies.remove(_COOKIE_TOKEN)
+
+
+def _apply_pending_remember_cookie() -> None:
+    """
+    يضبط كوكيز "تذكرني" الفعلية إن كانت مُجدولة من عملية دخول سابقة.
+    تُنفَّذ عمداً في تشغيل منفصل (وليس في نفس تشغيل تسجيل الدخول الذي يليه st.rerun())،
+    لأن مكوّن الكوكيز (streamlit-cookies-controller) يحتاج دورة عرض كاملة لتنفيذ
+    الجافاسكربت الخاص به قبل أي rerun آخر - وإلا لا تُكتب الكوكيز في المتصفح فعلياً.
+    """
+    pending = st.session_state.pop(_PENDING_REMEMBER_KEY, None)
+    if pending:
+        _set_remember_cookies(*pending)
 
 
 def _try_auto_login() -> None:
@@ -90,6 +103,7 @@ def _try_auto_login() -> None:
 def _init_session_state() -> None:
     if "user" not in st.session_state:
         st.session_state.user = None  # dict بسيط: id / username / full_name / role
+    _apply_pending_remember_cookie()
     _try_auto_login()
 
 
@@ -122,12 +136,14 @@ def _login_view() -> None:
                         "full_name": user.full_name,
                         "role": user.role,
                     }
+                    token = None
                     if remember_me and _COOKIES_AVAILABLE:
                         token = auth_service.create_remember_token(user.id)
-                        # نحفظ الكوكيز بعد الـ commit مباشرة (نفس القيم صحيحة الآن)
                         user_id = user.id
-                if remember_me and _COOKIES_AVAILABLE:
-                    _set_remember_cookies(user_id, token)
+                # نجدول ضبط الكوكيز للتشغيل التالي بدل تنفيذه هنا مباشرة قبل rerun
+                # (راجع _apply_pending_remember_cookie لسبب هذا التأجيل).
+                if token:
+                    st.session_state[_PENDING_REMEMBER_KEY] = (user_id, token)
                 st.rerun()
             except (AuthenticationError, InactiveUserError) as exc:
                 st.error(str(exc))

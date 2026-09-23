@@ -1,4 +1,4 @@
-"""صفحة إدارة الوظائف: إضافة / عرض / تعديل / حذف - بنفس فئات مهارات المرشحين."""
+"""صفحة إدارة الوظائف: إضافة / عرض / تعديل / حذف - بنفس فئات مهارات المرشحين، مع توليد تلقائي بالذكاء الاصطناعي."""
 
 import re
 
@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from core.constants import JOB_STATUSES
-from core.exceptions import SmartATSError
+from core.exceptions import AIServiceError, SmartATSError
 from database.database import get_db_session
 from models.job import Job
 from services.job_service import JobService
@@ -57,14 +57,62 @@ def _join(items: list[str] | None) -> str:
     return ", ".join(items) if items else "-"
 
 
-def _job_form_fields(key: str, job: Job | None = None) -> dict:
-    """يرسم حقول نموذج الوظيفة (للإضافة أو التعديل) ويرجع القيم المُدخلة."""
-    title = st.text_input("مسمى الوظيفة *", value=job.title if job else "", key=f"{key}_title")
-    department = st.text_input("القسم", value=(job.department or "") if job else "", key=f"{key}_dept")
-    location = st.text_input("الموقع", value=(job.location or "") if job else "", key=f"{key}_loc")
+def _render_ai_job_generator(key: str) -> dict | None:
+    """
+    زر توليد بيانات الوظيفة تلقائياً من وصف حر عبر الذكاء الاصطناعي.
+    يُعرض قبل نموذج الوظيفة (إضافة أو تعديل)، والنتيجة تُستخدم كقيم افتراضية لحقول النموذج.
+    """
+    ai_key = f"ai_job_draft_{key}"
+    with st.expander("🤖 توليد بيانات الوظيفة تلقائياً من وصف حر"):
+        raw_description = st.text_area(
+            "الصق وصف الوظيفة هنا (نص غير منظم)",
+            key=f"{key}_ai_raw_desc",
+            height=100,
+            placeholder="مثال: نحتاج مدير إنتاج لمصنع بلاستيك بخبرة في الحقن والبثق...",
+        )
+        if st.button("🤖 توليد تلقائياً", key=f"{key}_ai_generate_btn"):
+            if not raw_description.strip():
+                st.warning("الصق وصف الوظيفة أولاً.")
+            else:
+                try:
+                    from ai.job_analyzer import analyze_job_description
+
+                    with st.spinner("جاري تحليل الوصف..."):
+                        result = analyze_job_description(raw_description.strip())
+                    st.session_state[ai_key] = result.model_dump()
+                    st.success("تم التوليد — راجع الحقول أدناه وعدّلها قبل الحفظ.")
+                    st.rerun()
+                except AIServiceError as exc:
+                    st.error(str(exc))
+    return st.session_state.get(ai_key)
+
+
+def _job_form_fields(key: str, job: Job | None = None, ai_defaults: dict | None = None) -> dict:
+    """يرسم حقول نموذج الوظيفة (للإضافة أو التعديل) ويرجع القيم المُدخلة. ai_defaults (إن وُجد) يُستخدم كقيم مبدئية."""
+    ai_defaults = ai_defaults or {}
+
+    title = st.text_input(
+        "مسمى الوظيفة *",
+        value=ai_defaults.get("title") or (job.title if job else ""),
+        key=f"{key}_title",
+    )
+    department = st.text_input(
+        "القسم",
+        value=ai_defaults.get("department") or ((job.department or "") if job else ""),
+        key=f"{key}_dept",
+    )
+    location = st.text_input(
+        "الموقع",
+        value=ai_defaults.get("location") or ((job.location or "") if job else ""),
+        key=f"{key}_loc",
+    )
     experience = st.number_input(
         "سنوات الخبرة المطلوبة", min_value=0.0, step=0.5,
-        value=float(job.required_experience_years or 0.0) if job else 0.0, key=f"{key}_exp",
+        value=float(
+            ai_defaults.get("required_experience_years")
+            or (job.required_experience_years if job and job.required_experience_years else 0.0)
+        ),
+        key=f"{key}_exp",
     )
     status_index = (
         JOB_STATUSES.index(job.status) if job and job.status in JOB_STATUSES else _DEFAULT_STATUS_INDEX
@@ -73,15 +121,18 @@ def _job_form_fields(key: str, job: Job | None = None) -> dict:
 
     raw_lists: dict[str, str] = {}
     for label, attr in _LIST_FIELDS:
+        default_items = ai_defaults.get(attr) or ((getattr(job, attr) or []) if job else [])
         raw_lists[attr] = st.text_area(
             f"{label} (مفصولة بفاصلة)",
-            value=", ".join(getattr(job, attr) or []) if job else "",
+            value=", ".join(default_items),
             key=f"{key}_{attr}",
             height=80,
         )
 
     description = st.text_area(
-        "وصف الوظيفة", value=(job.description or "") if job else "", key=f"{key}_desc"
+        "وصف الوظيفة",
+        value=ai_defaults.get("description") or ((job.description or "") if job else ""),
+        key=f"{key}_desc",
     )
 
     return {
@@ -97,14 +148,16 @@ def _job_form_fields(key: str, job: Job | None = None) -> dict:
 
 def _render_add_form() -> None:
     with st.expander("➕ إضافة وظيفة جديدة", expanded=False):
+        ai_defaults = _render_ai_job_generator("new")
         with st.form("new_job_form", clear_on_submit=True):
-            values = _job_form_fields("new")
+            values = _job_form_fields("new", ai_defaults=ai_defaults)
             submitted = st.form_submit_button("حفظ الوظيفة", type="primary")
 
         if submitted:
             try:
                 with get_db_session() as session:
                     JobService(session).create_job(**values)
+                st.session_state.pop("ai_job_draft_new", None)
                 _invalidate_job_related_caches()
                 st.toast("تمت إضافة الوظيفة ✅")
                 st.rerun()
@@ -119,15 +172,18 @@ def _render_edit_panel(job_id: int) -> None:
         st.warning("الوظيفة غير موجودة.")
         return
 
+    edit_key = f"edit_{job_id}"
     st.subheader(f"✏️ تعديل: {job.title}")
+    ai_defaults = _render_ai_job_generator(edit_key)
     with st.form(f"edit_job_form_{job_id}"):
-        values = _job_form_fields(f"edit_{job_id}", job)
+        values = _job_form_fields(edit_key, job, ai_defaults=ai_defaults)
         saved = st.form_submit_button("💾 حفظ التعديلات", type="primary")
 
     if saved:
         try:
             with get_db_session() as session:
                 JobService(session).update_job(job_id, **values)
+            st.session_state.pop(f"ai_job_draft_{edit_key}", None)
             _invalidate_job_related_caches()
             st.toast("تم حفظ التعديلات ✅")
             st.rerun()

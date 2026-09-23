@@ -154,3 +154,29 @@ class CandidateAnalysis(BaseModel):
     @classmethod
     def _normalize_analysis_lists(cls, value: Any) -> Any:
         return _coerce_to_str_list(value)
+
+class JobRequirements(BaseModel):
+    """متطلبات وظيفة مهيكلة يستخرجها الذكاء الاصطناعي من وصف حر غير منظم."""
+
+    title: str | None = None
+    department: str | None = None
+    location: str | None = None
+    required_experience_years: float | None = None
+
+    required_technical_skills: list[str] = Field(default_factory=list)
+    required_computer_skills: list[str] = Field(default_factory=list)
+    required_managerial_skills: list[str] = Field(default_factory=list)
+    required_soft_skills: list[str] = Field(default_factory=list)
+    required_skills: list[str] = Field(default_factory=list)
+    preferred_industries: list[str] = Field(default_factory=list)
+
+    description: str | None = None
+
+    @field_validator(
+        "required_technical_skills", "required_computer_skills", "required_managerial_skills",
+        "required_soft_skills", "required_skills", "preferred_industries",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_job_lists(cls, value: Any) -> Any:
+        return _coerce_to_str_list(value)

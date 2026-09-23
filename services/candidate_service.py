@@ -86,10 +86,6 @@ class CandidateService:
         parser = DocumentParserFactory.get_parser(file_path)
         raw_text = parser.extract_text(file_path)
 
-        # استخراج الصورة لا يعتمد على نص السيرة، فنشغّله في Thread منفصل بالتوازي مع استدعاء AI
-        # (كل منهما قد يستدعي Gemini، وتشغيلهما بالتوازي بدل التتابع يقلّل زمن معالجة الملف الواحد بشكل ملحوظ).
-        # ملاحظة: في الحالة النادرة التي يتبيّن فيها لاحقاً أن الملف مكرر، نكون قد صرفنا نداء Gemini
-        # إضافياً بلا داعٍ - وهذا مقبول مقابل تسريع الحالة الغالبة (ملف غير مكرر).
         with ThreadPoolExecutor(max_workers=1) as photo_executor:
             photo_future = photo_executor.submit(parser.extract_photo, file_path)
 
@@ -140,6 +136,17 @@ class CandidateService:
         )
         self._candidates.add(candidate)
         self._assign_code(candidate)
+
+        # تحليل الذكاء الاصطناعي الشامل يُولَّد تلقائياً في الخلفية فور إنشاء المرشح
+        # (داخل نفس Thread معالجة الملف في upload_cv.py، فلا يُجمّد واجهة الرفع).
+        # فشل التحليل لا يوقف رفع السيرة - المرشح يُحفظ بدونه ويمكن توليده لاحقاً يدوياً من بطاقته.
+        if self._ai_available():
+            try:
+                from ai.analyzer import analyze_candidate
+
+                candidate.ai_analysis = analyze_candidate(candidate).model_dump()
+            except AIServiceError as exc:
+                logger.warning("Automatic AI analysis failed for %s: %s", candidate.full_name, exc)
 
         # سمة مؤقتة (غير محفوظة في القاعدة) تقرؤها صفحة الرفع لعرض التنبيه
         candidate.duplicate_warning = " | ".join(m.describe() for m in matches) or None
