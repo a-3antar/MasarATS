@@ -73,7 +73,9 @@ class Candidate(Base):
 
     # تتبع تحليل الذكاء الاصطناعي
     ai_analyzed: Mapped[bool] = mapped_column(default=False)
-
+        # نتيجة تحليل الذكاء الاصطناعي مخزّنة (كاش) لتفادي إعادة الاستدعاء - القسم 28 (AI Cost Optimization)
+    ai_analysis: Mapped[dict] = mapped_column(JSON, default=dict, nullable=True)
+    
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
     @property

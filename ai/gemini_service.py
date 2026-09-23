@@ -199,3 +199,31 @@ class GeminiService(AIProvider):
         except Exception as exc:
             logger.error("Gemini interview generation failed: %s | raw_response=%s", exc, raw_text[:2000])
             raise AIServiceError(f"فشل توليد أسئلة المقابلة: {exc}") from exc
+
+    def analyze_candidate(self, candidate_text: str):
+        """يولّد تحليلاً شاملاً للمرشح (مستوى وظيفي، نقاط قوة، فجوات، وظائف مناسبة). يرفع AIServiceError عند الفشل."""
+        from ai.prompts import CV_ANALYSIS_PROMPT_TEMPLATE
+        from ai.schemas import CandidateAnalysis
+
+        raw_text = ""
+        try:
+            client = self._client()
+            prompt = CV_ANALYSIS_PROMPT_TEMPLATE.format(candidate_text=candidate_text[:8000])
+            response = client.models.generate_content(
+                model=self._settings.ai_model,
+                contents=prompt,
+                config={
+                    "temperature": self._settings.ai_temperature,
+                    "response_mime_type": "application/json",
+                    "response_schema": _pydantic_to_gemini_schema(CandidateAnalysis),
+                    "max_output_tokens": 2048,
+                },
+            )
+            raw_text = response.text
+            return CandidateAnalysis.model_validate(json.loads(raw_text))
+        except ValidationError as exc:
+            logger.error("Candidate analysis failed validation: %s | raw_response=%s", exc, raw_text[:2000])
+            raise AIServiceError("استجابة الذكاء الاصطناعي لم تطابق الشكل المتوقع.") from exc
+        except Exception as exc:
+            logger.error("Gemini candidate analysis failed: %s | raw_response=%s", exc, raw_text[:2000])
+            raise AIServiceError(f"فشل تحليل المرشح: {exc}") from exc

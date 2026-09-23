@@ -278,7 +278,41 @@ def _render_card(candidate: Candidate, photo_path, lang: str) -> None:
         st.caption(_NOT_MENTIONED)
 
     st.caption(f"📎 المصدر: {candidate.source_filename or 'إدخال يدوي'}")
+    st.divider()
+    _render_ai_analysis(candidate)
 
+def _render_ai_analysis(candidate: Candidate) -> None:
+    st.markdown("**🤖 تحليل الذكاء الاصطناعي**")
+    analysis = candidate.ai_analysis or {}
+
+    button_label = "🔄 إعادة التحليل" if analysis else "🤖 توليد التحليل"
+    if not analysis:
+        st.caption("لم يتم توليد تحليل الذكاء الاصطناعي لهذا المرشح بعد.")
+    if st.button(button_label, key=f"analysis_btn_{candidate.id}"):
+        try:
+            with st.spinner("جاري التحليل..."):
+                with get_db_session() as session:
+                    CandidateService(session).generate_ai_analysis(candidate.id)
+            st.rerun()
+        except SmartATSError as exc:
+            st.error(str(exc))
+
+    if not analysis:
+        return
+
+    if analysis.get("career_level"):
+        st.write(f"📈 المستوى الوظيفي: **{analysis['career_level']}**")
+    if analysis.get("strengths"):
+        st.markdown("**نقاط القوة:**")
+        for s in analysis["strengths"]:
+            st.write(f"✓ {s}")
+    if analysis.get("potential_gaps"):
+        st.markdown("**فجوات محتملة:**")
+        for g in analysis["potential_gaps"]:
+            st.write(f"⚠ {g}")
+    if analysis.get("suitable_functions"):
+        st.markdown("**الأقسام/الوظائف المناسبة:**")
+        st.markdown(_tags(analysis["suitable_functions"]))
 
 def _render_edit_form(candidate: Candidate, photo_path) -> None:
     cid = candidate.id

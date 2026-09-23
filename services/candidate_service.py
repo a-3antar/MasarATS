@@ -363,3 +363,12 @@ class CandidateService:
 
     def search(self, query: str) -> list[Candidate]:
         return self._candidates.search(query) if query else self._candidates.list_all()
+
+    def generate_ai_analysis(self, candidate_id: int) -> dict:
+        """يولّد تحليل الذكاء الاصطناعي الشامل للمرشح ويخزّنه (كاش) في عمود ai_analysis. يرفع AIServiceError عند الفشل."""
+        from ai.analyzer import analyze_candidate
+
+        candidate = self._get_or_raise(candidate_id)
+        analysis = analyze_candidate(candidate)
+        candidate.ai_analysis = analysis.model_dump()
+        return candidate.ai_analysis

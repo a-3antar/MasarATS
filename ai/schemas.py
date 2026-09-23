@@ -141,3 +141,16 @@ class InterviewQuestions(BaseModel):
     leadership: list[InterviewQuestion] = Field(default_factory=list)
     cv_specific: list[InterviewQuestion] = Field(default_factory=list)
     risk_areas: list[str] = Field(default_factory=list)  # نقاط غامضة أو تحتاج توضيحاً في السيرة 
+
+class CandidateAnalysis(BaseModel):
+    """تحليل شامل للمرشح: مستوى وظيفي، نقاط قوة مبنية على أدلة، فجوات محتملة (غير موثّقة وليست غياباً مؤكداً)، ووظائف مناسبة."""
+
+    career_level: str | None = None
+    strengths: list[str] = Field(default_factory=list)
+    potential_gaps: list[str] = Field(default_factory=list)
+    suitable_functions: list[str] = Field(default_factory=list)
+
+    @field_validator("strengths", "potential_gaps", "suitable_functions", mode="before")
+    @classmethod
+    def _normalize_analysis_lists(cls, value: Any) -> Any:
+        return _coerce_to_str_list(value)
