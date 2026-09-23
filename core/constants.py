@@ -49,3 +49,8 @@ SEARCH_MAX_CANDIDATES: int = 5000     # حد أمان لعدد المرشحين 
 # إدارة المقابلات
 INTERVIEW_TYPES: list[str] = ["HR", "Technical", "Management", "Behavioral", "Final"]
 INTERVIEW_STATUSES: list[str] = ["Scheduled", "Completed", "Cancelled"]
+
+# التحليل الخلفي بالذكاء الاصطناعي
+AI_BACKGROUND_WORKERS: int = 2   # عدد التحليلات المتزامنة في الخلفية (حماية لحصة Gemini)
+
+_MAX_WORKERS = 6

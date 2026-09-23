@@ -11,7 +11,7 @@ from models.candidate import Candidate
 from services.candidate_service import CandidateService
 from services.job_service import JobService
 from services.matching_service import MatchingService
-
+from services import background_analysis
 
 # ترتيب الأقسام ثابت لكل المرشحين - هذا ما يوحّد شكل السير الذاتية
 _SKILL_SECTIONS: list[tuple[str, str]] = [
@@ -285,17 +285,22 @@ def _render_ai_analysis(candidate: Candidate) -> None:
     st.markdown("**🤖 تحليل الذكاء الاصطناعي**")
     analysis = candidate.ai_analysis or {}
 
-    button_label = "🔄 إعادة التحليل" if analysis else "🤖 توليد التحليل"
-    if not analysis:
-        st.caption("لم يتم توليد تحليل الذكاء الاصطناعي لهذا المرشح بعد.")
-    if st.button(button_label, key=f"analysis_btn_{candidate.id}"):
-        try:
-            with st.spinner("جاري التحليل..."):
-                with get_db_session() as session:
-                    CandidateService(session).generate_ai_analysis(candidate.id)
+    if background_analysis.is_pending(candidate.id):
+        st.info("⏳ جاري تحليل الذكاء الاصطناعي في الخلفية، يمكنك متابعة عملك.")
+        if st.button("🔄 تحديث", key=f"analysis_refresh_{candidate.id}"):
             st.rerun()
-        except SmartATSError as exc:
-            st.error(str(exc))
+    else:
+        button_label = "🔄 إعادة التحليل" if analysis else "🤖 توليد التحليل"
+        if not analysis:
+            st.caption("لم يتم توليد تحليل الذكاء الاصطناعي لهذا المرشح بعد.")
+        if st.button(button_label, key=f"analysis_btn_{candidate.id}"):
+            try:
+                with st.spinner("جاري التحليل..."):
+                    with get_db_session() as session:
+                        CandidateService(session).generate_ai_analysis(candidate.id)
+                st.rerun()
+            except SmartATSError as exc:
+                st.error(str(exc))
 
     if not analysis:
         return

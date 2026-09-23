@@ -121,6 +121,8 @@ class AuthService:
 
         if not verify_password(token, user.remember_token_hash):
             return None
+        return user
+        
 
     def clear_remember_token(self, user_id: int) -> None:
         """إبطال توكن "تذكرني" الحالي (تسجيل الخروج الكامل، أو عند الاشتباه بمشكلة أمنية)."""

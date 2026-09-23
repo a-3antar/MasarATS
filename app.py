@@ -89,25 +89,15 @@ def _apply_pending_remember_cookie() -> None:
         st.rerun()
 
 
-
-
 def _try_auto_login() -> None:
     """يحاول تسجيل الدخول تلقائياً من كوكيز "تذكرني" إن وُجدت وكانت صالحة."""
     if not _COOKIES_AVAILABLE or st.session_state.get("user") is not None:
         return
 
-    # عند فتح التطبيق من جديد (تبويب جديد)، قد لا يكون مكوّن الكوكيز قد أكمل تحميله بعد
-    # في هذا التشغيل الأول، فتُقرأ القيم كـ None رغم وجودها فعلياً في المتصفح.
-    # getAll() ترجع None طالما المكوّن لم يُزامن بعد (بخلاف {} التي تعني "لا توجد كوكيز إطلاقاً").
-    # نعطيه محاولة إعادة تشغيل واحدة فقط لتفادي حلقة لا نهائية.
-    all_cookies = _cookies.getAll()
-
-    # On a brand-new browser session the component may initially have an
-    # empty cache. Refresh the component cache once before deciding that
-    # there is no remember-me cookie.
-    if not all_cookies:
-        _cookies.refresh()
-        all_cookies = _cookies.getAll()
+    # لا نستدعي refresh() هنا: المكوّن أُنشئ فعلاً عند تعريف CookieController، واستدعاؤه
+    # ثانية بنفس الـ key في نفس التشغيل يسبب StreamlitDuplicateElementKey.
+    # عند وصول الكوكيز من المتصفح يعيد المكوّن تشغيل الصفحة تلقائياً فتُقرأ هنا.
+    all_cookies = _cookies.getAll() or {}
 
     raw_auth = all_cookies.get(_COOKIE_AUTH)
     if not raw_auth:
@@ -134,9 +124,7 @@ def _try_auto_login() -> None:
                 _clear_remember_cookie()
 
     except (ValueError, TypeError, KeyError, json.JSONDecodeError, SmartATSError):
-        # Cookie is invalid or the remember token is no longer valid.
         _clear_remember_cookie()
-
 
 def _init_session_state() -> None:
     if "user" not in st.session_state:

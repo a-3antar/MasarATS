@@ -11,14 +11,14 @@ from core.exceptions import DuplicateCandidateError, SmartATSError, ValidationEr
 from database.database import get_db_session
 from views import candidate_profile
 from services.candidate_service import CandidateService
+from services import background_analysis
+from core.constants import _MAX_WORKERS
 
 # مفتاح حفظ نتائج الرفع في session_state حتى لا تختفي البطاقات عند أي rerun (مثل حفظ تعديل)
 _RESULTS_KEY = "upload_cv_results"
 
 # عدد الملفات المعالَجة بالتوازي. أكبر من هذا قد يضغط على حصة (quota) Gemini
 # أو يزيد تعارض الكتابة على SQLite بدل تسريع المعالجة.
-_MAX_WORKERS = 6
-
 
 def _process_one(tmp_path: str, filename: str) -> dict:
     """يعالج ملفاً واحداً في جلسة قاعدة بيانات مستقلة. يعمل داخل Thread منفصل - لا ينادي أي دالة Streamlit."""
@@ -38,7 +38,6 @@ def _process_one(tmp_path: str, filename: str) -> dict:
         return {"ok": False, "duplicate": False, "filename": filename, "message": str(exc)}
     finally:
         Path(tmp_path).unlink(missing_ok=True)
-
 
 def _render_results() -> None:
     """يعرض بطاقة قابلة للتعديل لكل مرشح تم استخلاصه في هذه الجلسة."""
@@ -62,7 +61,6 @@ def _render_results() -> None:
             if item.get("warning"):
                 st.warning(f"⚠️ قد يكون مكرراً: {item['warning']}")
             candidate_profile.render_profile(item["id"])
-
 
 def render() -> None:
     st.header("📄 رفع سيرة ذاتية")
@@ -118,7 +116,15 @@ def render() -> None:
 
                 progress.progress(done / total, text=f"تمت معالجة {done} / {total}")
 
+        # انتهى الاستخلاص الأساسي لكل الملفات (وتم commit لكل المرشحين):
+        # الآن فقط نبدأ التحليل الشامل في الخلفية، فلا ينافس الاستخلاص على حصة Gemini
+        for item in new_results:
+            background_analysis.submit(item["id"])
+
         st.session_state[_RESULTS_KEY] = new_results
-        st.info(f"انتهت المعالجة — نجاح: {completed} | أخطاء: {errors}")
+        st.info(
+            f"انتهت المعالجة — نجاح: {completed} | أخطاء: {errors}"
+            + (" — بدأ التحليل الشامل في الخلفية." if new_results else "")
+        )
 
     _render_results()

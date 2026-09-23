@@ -64,11 +64,14 @@ class CandidateService:
         self._candidates = CandidateRepository(session)
         self._duplicates = DuplicateDetector(self._candidates)
 
+
     def process_cv_file(self, file_path: str, original_filename: str) -> Candidate:
         """
         السير الكامل لمعالجة ملف سيرة ذاتية واحد وحفظه كمرشح.
         يرفع ValidationError لملف غير مدعوم، أو DuplicateCandidateError لملف/مرشح مكرر.
         تطابق الاسم فقط لا يمنع الحفظ، بل يوضع في candidate.duplicate_warning للعرض.
+        تحليل الذكاء الاصطناعي الشامل لا يتم هنا: تجدوله الواجهة في الخلفية بعد الـ commit
+        (services/background_analysis.py).
         """
         extension = Path(original_filename).suffix.lower()
         if extension not in ALLOWED_CV_EXTENSIONS:
@@ -136,17 +139,6 @@ class CandidateService:
         )
         self._candidates.add(candidate)
         self._assign_code(candidate)
-
-        # تحليل الذكاء الاصطناعي الشامل يُولَّد تلقائياً في الخلفية فور إنشاء المرشح
-        # (داخل نفس Thread معالجة الملف في upload_cv.py، فلا يُجمّد واجهة الرفع).
-        # فشل التحليل لا يوقف رفع السيرة - المرشح يُحفظ بدونه ويمكن توليده لاحقاً يدوياً من بطاقته.
-        if self._ai_available():
-            try:
-                from ai.analyzer import analyze_candidate
-
-                candidate.ai_analysis = analyze_candidate(candidate).model_dump()
-            except AIServiceError as exc:
-                logger.warning("Automatic AI analysis failed for %s: %s", candidate.full_name, exc)
 
         # سمة مؤقتة (غير محفوظة في القاعدة) تقرؤها صفحة الرفع لعرض التنبيه
         candidate.duplicate_warning = " | ".join(m.describe() for m in matches) or None
