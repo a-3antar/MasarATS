@@ -88,12 +88,12 @@ def _render_kanban_card(r: dict, status: str) -> None:
         col_back, col_fwd = st.columns(2)
         with col_back:
             if idx > 0 and st.button(
-                "◀ رجوع", key=f"kanban_back_{r['application'].id}", width="stretch"
+                "◀◀", key=f"kanban_back_{r['application'].id}", width="stretch"
             ):
                 _change_application_status(r["application"].id, APPLICATION_STATUSES[idx - 1])
         with col_fwd:
             if idx < len(APPLICATION_STATUSES) - 1 and st.button(
-                "تقديم ▶", key=f"kanban_fwd_{r['application'].id}", width="stretch"
+                "▶▶", key=f"kanban_fwd_{r['application'].id}", width="stretch"
             ):
                 _change_application_status(r["application"].id, APPLICATION_STATUSES[idx + 1])
 

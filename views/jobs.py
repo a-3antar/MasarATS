@@ -57,12 +57,52 @@ def _join(items: list[str] | None) -> str:
     return ", ".join(items) if items else "-"
 
 
-def _render_ai_job_generator(key: str) -> dict | None:
+def _form_values_from(job: Job | None, draft: dict | None = None) -> dict:
+    """
+    القيم المبدئية لحقول النموذج، مفتاحها لاحقة اسم الحقل (title, dept, exp...).
+    أولوية القيمة: نتيجة الذكاء الاصطناعي (إن وُجدت وغير فارغة) ثم بيانات الوظيفة الحالية ثم الفراغ.
+    """
+    draft = draft or {}
+
+    def pick(field: str, current, empty=""):
+        return draft.get(field) or current or empty
+
+    values = {
+        "title": pick("title", job.title if job else None),
+        "dept": pick("department", job.department if job else None),
+        "loc": pick("location", job.location if job else None),
+        "desc": pick("description", job.description if job else None),
+        "exp": float(pick("required_experience_years", job.required_experience_years if job else None, 0.0)),
+        "status": job.status if job and job.status in JOB_STATUSES else JOB_STATUSES[_DEFAULT_STATUS_INDEX],
+    }
+    for _, attr in _LIST_FIELDS:
+        items = draft.get(attr) or (getattr(job, attr, None) if job else None) or []
+        values[attr] = ", ".join(items)
+    return values
+
+
+def _apply_values_to_state(key: str, values: dict, only_non_empty: bool = False) -> None:
+    """يكتب القيم في session_state بمفاتيح الحقول. only_non_empty=True لا يمسح الحقول المعبّأة بقيم فارغة."""
+    for suffix, value in values.items():
+        if only_non_empty and value in ("", 0.0, None):
+            continue
+        st.session_state[f"{key}_{suffix}"] = value
+
+
+def _seed_form_state(key: str, job: Job | None) -> None:
+    """يهيّئ حقول النموذج من بيانات الوظيفة مرة واحدة فقط (أول رسم)، حتى لا تُستبدل تعديلات المستخدم."""
+    seeded_flag = f"{key}_seeded"
+    if st.session_state.get(seeded_flag):
+        return
+    _apply_values_to_state(key, _form_values_from(job))
+    st.session_state[seeded_flag] = True
+
+
+def _render_ai_job_generator(key: str) -> None:
     """
     زر توليد بيانات الوظيفة تلقائياً من وصف حر عبر الذكاء الاصطناعي.
-    يُعرض قبل نموذج الوظيفة (إضافة أو تعديل)، والنتيجة تُستخدم كقيم افتراضية لحقول النموذج.
+    يُستدعى قبل رسم النموذج، والنتيجة تُكتب مباشرة في حالة حقوله (session_state).
     """
-    ai_key = f"ai_job_draft_{key}"
     with st.expander("🤖 توليد بيانات الوظيفة تلقائياً من وصف حر"):
         raw_description = st.text_area(
             "الصق وصف الوظيفة هنا (نص غير منظم)",
@@ -73,67 +113,39 @@ def _render_ai_job_generator(key: str) -> dict | None:
         if st.button("🤖 توليد تلقائياً", key=f"{key}_ai_generate_btn"):
             if not raw_description.strip():
                 st.warning("الصق وصف الوظيفة أولاً.")
-            else:
-                try:
-                    from ai.job_analyzer import analyze_job_description
+                return
+            try:
+                from ai.job_analyzer import analyze_job_description
 
-                    with st.spinner("جاري تحليل الوصف..."):
-                        result = analyze_job_description(raw_description.strip())
-                    st.session_state[ai_key] = result.model_dump()
-                    st.success("تم التوليد — راجع الحقول أدناه وعدّلها قبل الحفظ.")
-                    st.rerun()
-                except AIServiceError as exc:
-                    st.error(str(exc))
-    return st.session_state.get(ai_key)
+                with st.spinner("جاري تحليل الوصف..."):
+                    result = analyze_job_description(raw_description.strip())
+                _apply_values_to_state(key, _form_values_from(None, result.model_dump()), only_non_empty=True)
+                st.toast("تم التوليد — راجع الحقول وعدّلها قبل الحفظ")
+                st.rerun()
+            except AIServiceError as exc:
+                st.error(str(exc))
 
 
-def _job_form_fields(key: str, job: Job | None = None, ai_defaults: dict | None = None) -> dict:
-    """يرسم حقول نموذج الوظيفة (للإضافة أو التعديل) ويرجع القيم المُدخلة. ai_defaults (إن وُجد) يُستخدم كقيم مبدئية."""
-    ai_defaults = ai_defaults or {}
-
-    title = st.text_input(
-        "مسمى الوظيفة *",
-        value=ai_defaults.get("title") or (job.title if job else ""),
-        key=f"{key}_title",
-    )
-    department = st.text_input(
-        "القسم",
-        value=ai_defaults.get("department") or ((job.department or "") if job else ""),
-        key=f"{key}_dept",
-    )
-    location = st.text_input(
-        "الموقع",
-        value=ai_defaults.get("location") or ((job.location or "") if job else ""),
-        key=f"{key}_loc",
-    )
-    experience = st.number_input(
-        "سنوات الخبرة المطلوبة", min_value=0.0, step=0.5,
-        value=float(
-            ai_defaults.get("required_experience_years")
-            or (job.required_experience_years if job and job.required_experience_years else 0.0)
-        ),
-        key=f"{key}_exp",
-    )
-    status_index = (
-        JOB_STATUSES.index(job.status) if job and job.status in JOB_STATUSES else _DEFAULT_STATUS_INDEX
-    )
-    status = st.selectbox("حالة الوظيفة", JOB_STATUSES, index=status_index, key=f"{key}_status")
+def _job_form_fields(key: str) -> dict:
+    """
+    يرسم حقول نموذج الوظيفة (للإضافة أو التعديل) ويرجع القيم المُدخلة.
+    القيم المبدئية تأتي من session_state (تُهيَّأ عبر _seed_form_state)، لذلك لا نمرّر value= هنا.
+    """
+    title = st.text_input("مسمى الوظيفة *", key=f"{key}_title")
+    department = st.text_input("القسم", key=f"{key}_dept")
+    location = st.text_input("الموقع", key=f"{key}_loc")
+    experience = st.number_input("سنوات الخبرة المطلوبة", min_value=0.0, step=0.5, key=f"{key}_exp")
+    status = st.selectbox("حالة الوظيفة", JOB_STATUSES, key=f"{key}_status")
 
     raw_lists: dict[str, str] = {}
     for label, attr in _LIST_FIELDS:
-        default_items = ai_defaults.get(attr) or ((getattr(job, attr) or []) if job else [])
         raw_lists[attr] = st.text_area(
             f"{label} (مفصولة بفاصلة)",
-            value=", ".join(default_items),
             key=f"{key}_{attr}",
             height=80,
         )
 
-    description = st.text_area(
-        "وصف الوظيفة",
-        value=ai_defaults.get("description") or ((job.description or "") if job else ""),
-        key=f"{key}_desc",
-    )
+    description = st.text_area("وصف الوظيفة", key=f"{key}_desc")
 
     return {
         "title": title,
@@ -148,16 +160,19 @@ def _job_form_fields(key: str, job: Job | None = None, ai_defaults: dict | None 
 
 def _render_add_form() -> None:
     with st.expander("➕ إضافة وظيفة جديدة", expanded=False):
-        ai_defaults = _render_ai_job_generator("new")
-        with st.form("new_job_form", clear_on_submit=True):
-            values = _job_form_fields("new", ai_defaults=ai_defaults)
+        _seed_form_state("new", None)
+        _render_ai_job_generator("new")
+        with st.form("new_job_form"):
+            values = _job_form_fields("new")
             submitted = st.form_submit_button("حفظ الوظيفة", type="primary")
 
         if submitted:
             try:
                 with get_db_session() as session:
                     JobService(session).create_job(**values)
-                st.session_state.pop("ai_job_draft_new", None)
+                # مسح حالة النموذج ليُهيَّأ فارغاً في الرسم التالي
+                for state_key in [k for k in st.session_state if str(k).startswith("new_")]:
+                    del st.session_state[state_key]
                 _invalidate_job_related_caches()
                 st.toast("تمت إضافة الوظيفة ✅")
                 st.rerun()
@@ -174,16 +189,19 @@ def _render_edit_panel(job_id: int) -> None:
 
     edit_key = f"edit_{job_id}"
     st.subheader(f"✏️ تعديل: {job.title}")
-    ai_defaults = _render_ai_job_generator(edit_key)
+    _seed_form_state(edit_key, job)
+    _render_ai_job_generator(edit_key)
     with st.form(f"edit_job_form_{job_id}"):
-        values = _job_form_fields(edit_key, job, ai_defaults=ai_defaults)
+        values = _job_form_fields(edit_key)
         saved = st.form_submit_button("💾 حفظ التعديلات", type="primary")
 
     if saved:
         try:
             with get_db_session() as session:
                 JobService(session).update_job(job_id, **values)
-            st.session_state.pop(f"ai_job_draft_{edit_key}", None)
+            # نمسح التهيئة ليُعاد تحميل القيم المحفوظة من القاعدة في الرسم التالي
+            for state_key in [k for k in st.session_state if str(k).startswith(f"{edit_key}_")]:
+                del st.session_state[state_key]
             _invalidate_job_related_caches()
             st.toast("تم حفظ التعديلات ✅")
             st.rerun()
