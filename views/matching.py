@@ -37,23 +37,49 @@ def _invalidate_list_caches() -> None:
     _cached_jobs.clear()
     _cached_candidates.clear()
 
+def _clean_line(text: str) -> str:
+    """يحذف رموز ✓ و ⚠ القادمة من محرك المطابقة، حتى لا تتكرر مع ✔️ و ❌."""
+    return text.lstrip("✓✔⚠❌\ufe0f ").strip()
 
-def _render_match_details(r: dict) -> None:
-    """تفاصيل الدرجة (مشتركة بين الاتجاهين)."""
+
+def _render_match_details(r: dict, side_by_side: bool = True) -> None:
+    """
+    تفاصيل الدرجة (مشتركة بين الاتجاهين).
+    نقاط القوة (✔️) وفجوات محتملة (❌) في عمودين متجاورين.
+    side_by_side=False يعرضهما تحت بعض (للبطاقات الضيقة مثل Kanban).
+    """
     with st.expander("تفاصيل الدرجة"):
         b = r["breakdown"]
         st.write(
             f"المهارات: {b['skills']}% · الخبرة: {b['experience']}% · "
             f"الموقع: {b['location']}% · التعليم: {b['education']}%"
         )
-        if r["strengths"]:
+
+        def _render_strengths() -> None:
             st.markdown("**نقاط القوة:**")
-            for s in r["strengths"]:
-                st.write(s)
-        if r["gaps"]:
+            if r["strengths"]:
+                for s in r["strengths"]:
+                    st.write(f"✔️ {_clean_line(s)}")
+            else:
+                st.caption("لا توجد نقاط قوة مسجّلة.")
+
+        def _render_gaps() -> None:
             st.markdown("**فجوات محتملة:**")
-            for g in r["gaps"]:
-                st.write(g)
+            if r["gaps"]:
+                for g in r["gaps"]:
+                    st.write(f"❌ {_clean_line(g)}")
+            else:
+                st.caption("لا توجد فجوات.")
+
+        if side_by_side:
+            col_strengths, col_gaps = st.columns(2)
+            with col_strengths:
+                _render_strengths()
+            with col_gaps:
+                _render_gaps()
+        else:
+            _render_strengths()
+            _render_gaps()
 
 
 def _change_application_status(application_id: int, new_status: str) -> None:
@@ -83,7 +109,8 @@ def _render_kanban_card(r: dict, status: str) -> None:
         st.markdown(f"**{candidate.full_name}**")
         st.caption(candidate.current_position or "لا يوجد مسمى وظيفي مسجّل")
         st.write(f"🎯 {r['score']}%")
-        _render_match_details(r)
+        # عمود Kanban ضيق جداً (1/7 من العرض) وداخل columns، فنعرض القسمين تحت بعض
+        _render_match_details(r, side_by_side=False)
 
         col_back, col_fwd = st.columns(2)
         with col_back:
@@ -96,7 +123,6 @@ def _render_kanban_card(r: dict, status: str) -> None:
                 "▶▶", key=f"kanban_fwd_{r['application'].id}", width="stretch"
             ):
                 _change_application_status(r["application"].id, APPLICATION_STATUSES[idx + 1])
-
 
 def _render_kanban_board(results: list[dict]) -> None:
     """لوحة Kanban: عمود لكل مرحلة من مراحل خط التوظيف، بدل قائمة selectbox لتغيير الحالة."""
