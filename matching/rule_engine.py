@@ -47,7 +47,7 @@ class RuleBasedMatchingEngine(MatchingEngine):
             if _normalize(industry) in wanted_industries:
                 strengths.append(f"✓ خبرة سابقة في المجال: {industry}")
 
-        gaps = [f"⚠ مهارة غير موثّقة صراحة في السيرة الذاتية: {s}" for s in missing_skills]
+        gaps = [f"⚠غير موثّقة: {s}" for s in missing_skills]
         if experience_score < 50:
             gaps.append("⚠ الخبرة المذكورة أقل من المطلوب للوظيفة")
 

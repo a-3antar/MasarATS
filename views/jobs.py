@@ -88,20 +88,25 @@ def _apply_values_to_state(key: str, values: dict, only_non_empty: bool = False)
             continue
         st.session_state[f"{key}_{suffix}"] = value
 
-
 def _seed_form_state(key: str, job: Job | None) -> None:
-    """يهيّئ حقول النموذج من بيانات الوظيفة مرة واحدة فقط (أول رسم)، حتى لا تُستبدل تعديلات المستخدم."""
-    seeded_flag = f"{key}_seeded"
-    if st.session_state.get(seeded_flag):
-        return
-    _apply_values_to_state(key, _form_values_from(job))
-    st.session_state[seeded_flag] = True
+    """
+    يهيّئ حقول النموذج من بيانات الوظيفة عند غياب مفتاح الحقل فقط.
+    (Streamlit يمسح قيمة أي حقل لم يُرسم في تشغيل ما، فنعيد التهيئة تلقائياً بدل الاعتماد على علامة seeded.)
+    ثم يطبّق مسودة الذكاء الاصطناعي المعلّقة (إن وُجدت) قبل رسم الحقول مباشرة.
+    """
+    for suffix, value in _form_values_from(job).items():
+        st.session_state.setdefault(f"{key}_{suffix}", value)
+
+    pending = st.session_state.pop(f"{key}_pending_draft", None)
+    if pending:
+        _apply_values_to_state(key, pending, only_non_empty=True)
 
 
 def _render_ai_job_generator(key: str) -> None:
     """
     زر توليد بيانات الوظيفة تلقائياً من وصف حر عبر الذكاء الاصطناعي.
-    يُستدعى قبل رسم النموذج، والنتيجة تُكتب مباشرة في حالة حقوله (session_state).
+    النتيجة تُحفظ كمسودة معلّقة، وتُطبَّق على الحقول في التشغيل التالي (داخل _seed_form_state)
+    قبل إنشاء الـ widgets، وهذا هو الوقت الوحيد الآمن لتعديل قيمها.
     """
     with st.expander("🤖 توليد بيانات الوظيفة تلقائياً من وصف حر"):
         raw_description = st.text_area(
@@ -119,7 +124,7 @@ def _render_ai_job_generator(key: str) -> None:
 
                 with st.spinner("جاري تحليل الوصف..."):
                     result = analyze_job_description(raw_description.strip())
-                _apply_values_to_state(key, _form_values_from(None, result.model_dump()), only_non_empty=True)
+                st.session_state[f"{key}_pending_draft"] = _form_values_from(None, result.model_dump())
                 st.toast("تم التوليد — راجع الحقول وعدّلها قبل الحفظ")
                 st.rerun()
             except AIServiceError as exc:
