@@ -70,13 +70,10 @@ def _add_missing_columns() -> None:
 
 def init_db() -> None:
     """إنشاء كل الجداول المعرّفة إن لم تكن موجودة + إضافة الأعمدة الناقصة. تُستدعى عند بدء التطبيق."""
-    # استيراد النماذج هنا (وليس أعلى الملف) لتفادي circular imports،
-    # لأن كل نموذج يحتاج Base من هذا الملف.
-    from models import application, candidate, interview, job, user  # noqa: F401
+    from models import application, candidate, department, interview, job, position, user  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()
     logger.info("Database initialized (tables ensured).")
-
     
 @contextmanager
 def get_db_session() -> Generator[Session, None, None]:
