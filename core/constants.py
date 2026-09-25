@@ -60,3 +60,9 @@ AI_RETRY_MAX_ATTEMPTS: int = 4
 AI_RETRY_BASE_SECONDS: float = 4.0      # الانتظار: 4 ثم 8 ثم 16 ثانية (+ jitter)
 ANALYSIS_PENDING, ANALYSIS_DONE, ANALYSIS_FAILED = "pending", "done", "failed"
 PHOTO_BACKGROUND_WORKERS: int = 2
+
+# لوحة المعلومات والتقارير
+DASHBOARD_TOP_SKILLS: int = 10        # عدد المهارات في رسم "الأكثر تكراراً"
+NEW_CV_DAYS: int = 7                  # "سير جديدة" = آخر كم يوماً
+QUALIFIED_SCORE_THRESHOLD: float = 60.0  # درجة المطابقة التي يُعتبر بعدها المرشح مؤهلاً
+MIN_CANDIDATES_PER_JOB: int = 3       # أقل من هذا العدد = وظيفة تحتاج مرشحين

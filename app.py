@@ -207,16 +207,16 @@ def _login_view() -> None:
                 except SmartATSError as exc:
                     st.error(str(exc))
 
-
 views = {
     "🏠 الرئيسية": "home",
+    "📊 لوحة المعلومات": "dashboard",
     "📄 رفع سيرة ذاتية": "upload_cv",
     "👥 المرشحون": "candidates",
     "💼 الوظائف": "jobs",
     "🎯 المطابقة": "matching",
     "🗓️ المقابلات": "interviews",
+    "📈 التقارير": "reports",
 }
-
 
 def _render_home(user: dict) -> None:
     st.title("🧩 SmartATS AI")
@@ -264,6 +264,12 @@ def _authenticated_view() -> None:
     elif page_key == "interviews":
         from views import interviews
         interviews.render()
+    elif page_key == "dashboard":
+        from views import dashboard
+        dashboard.render()
+    elif page_key == "reports":
+        from views import reports
+        reports.render()
 
 
 def main() -> None:
