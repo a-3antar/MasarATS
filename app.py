@@ -34,15 +34,9 @@ _bootstrap()
 
 
 # ---------------------------------------------------------- كوكيز "تذكرني"
-# streamlit-cookies-controller uses a Streamlit component internally.
-# Keep ONE controller instance per Streamlit session and use ONE cookie
-# for the complete remember-me payload. This avoids component state
-# collisions when setting two cookies in the same run.
 try:
     from streamlit_cookies_controller import CookieController
 
-    # Use a dedicated component key. The package itself stores its cookie
-    # cache in st.session_state under this key.
     _cookies = CookieController(key="smartats_cookie_controller")
     _COOKIES_AVAILABLE = True
 except ImportError:
@@ -74,17 +68,9 @@ def _clear_remember_cookie() -> None:
 
 
 def _apply_pending_remember_cookie() -> None:
-    """
-    Apply a pending remember-me cookie in a separate Streamlit run.
-    The cookie component needs time to send the browser-side JavaScript
-    operation before another rerun occurs.
-    """
     pending = st.session_state.pop(_PENDING_REMEMBER_KEY, None)
     if pending:
         _set_remember_cookie(*pending)
-        # Give the browser/component a chance to commit the cookie, then
-        # restart immediately. This prevents _try_auto_login() from calling
-        # refresh() in the same run and creating the same component key twice.
         time.sleep(0.5)
         st.rerun()
 
@@ -94,9 +80,6 @@ def _try_auto_login() -> None:
     if not _COOKIES_AVAILABLE or st.session_state.get("user") is not None:
         return
 
-    # لا نستدعي refresh() هنا: المكوّن أُنشئ فعلاً عند تعريف CookieController، واستدعاؤه
-    # ثانية بنفس الـ key في نفس التشغيل يسبب StreamlitDuplicateElementKey.
-    # عند وصول الكوكيز من المتصفح يعيد المكوّن تشغيل الصفحة تلقائياً فتُقرأ هنا.
     all_cookies = _cookies.getAll() or {}
 
     raw_auth = all_cookies.get(_COOKIE_AUTH)
@@ -128,7 +111,7 @@ def _try_auto_login() -> None:
 
 def _init_session_state() -> None:
     if "user" not in st.session_state:
-        st.session_state.user = None  # dict بسيط: id / username / full_name / role
+        st.session_state.user = None
     _apply_pending_remember_cookie()
     _try_auto_login()
 
@@ -166,8 +149,6 @@ def _login_view() -> None:
                     if remember_me and _COOKIES_AVAILABLE:
                         token = auth_service.create_remember_token(user.id)
                         user_id = user.id
-                # نجدول ضبط الكوكيز للتشغيل التالي بدل تنفيذه هنا مباشرة قبل rerun
-                # (راجع _apply_pending_remember_cookie لسبب هذا التأجيل).
                 if token:
                     st.session_state[_PENDING_REMEMBER_KEY] = (user_id, token)
                 st.rerun()
@@ -192,7 +173,6 @@ def _login_view() -> None:
                 try:
                     with get_db_session() as session:
                         auth_service = AuthService(session)
-                        # أول مستخدم في النظام يصبح Admin تلقائياً، والباقي Recruiter افتراضياً
                         role = UserRole.ADMIN if not auth_service.has_any_user() else UserRole.RECRUITER
                         auth_service.register_user(
                             username=new_username,
@@ -215,6 +195,7 @@ views = {
     "💼 الوظائف": "jobs",
     "🎯 المطابقة": "matching",
     "🗓️ المقابلات": "interviews",
+    "🏢 الهيكل التنظيمي": "organization",
     "📈 التقارير": "reports",
 }
 
@@ -227,6 +208,7 @@ def _render_home(user: dict) -> None:
 2. **المرشحون** — تصفّح وابحث في المرشحين، أو أضف واحداً يدوياً.
 3. **الوظائف** — أضف وظيفة شاغرة مع المهارات والخبرة المطلوبة.
 4. **المطابقة** — اختر وظيفة واحصل على ترتيب المرشحين مع تفسير الدرجة.
+5. **الهيكل التنظيمي** — أقسام، مسميات وظيفية، وتحليل فجوة القوى العاملة.
         """
     )
 
@@ -264,6 +246,9 @@ def _authenticated_view() -> None:
     elif page_key == "interviews":
         from views import interviews
         interviews.render()
+    elif page_key == "organization":
+        from views import organization
+        organization.render()
     elif page_key == "dashboard":
         from views import dashboard
         dashboard.render()
