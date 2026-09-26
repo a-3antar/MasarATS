@@ -41,6 +41,8 @@ class Job(Base):
     status: Mapped[str] = mapped_column(String(20), default=JOB_STATUSES[1])  # "Open" افتراضياً
 
     match_weights: Mapped[dict] = mapped_column(JSON, default=lambda: dict(DEFAULT_MATCH_WEIGHTS))
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    embedding_meta: Mapped[dict] = mapped_column(JSON, default=dict, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 

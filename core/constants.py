@@ -66,3 +66,7 @@ DASHBOARD_TOP_SKILLS: int = 10        # عدد المهارات في رسم "ا�
 NEW_CV_DAYS: int = 7                  # "سير جديدة" = آخر كم يوماً
 QUALIFIED_SCORE_THRESHOLD: float = 60.0  # درجة المطابقة التي يُعتبر بعدها المرشح مؤهلاً
 MIN_CANDIDATES_PER_JOB: int = 3       # أقل من هذا العدد = وظيفة تحتاج مرشحين
+
+# المطابقة الهجينة (Hybrid): وزن التشابه الدلالي الافتراضي عندما لا تحدد الوظيفة وزناً خاصاً بها
+SEMANTIC_DEFAULT_WEIGHT: float = 0.2
+EMBEDDING_MODEL_NAME: str = "gemini-embedding-001"

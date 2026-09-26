@@ -53,6 +53,7 @@ def _render_match_details(r: dict, side_by_side: bool = True) -> None:
         st.write(
             f"المهارات: {b['skills']}% · الخبرة: {b['experience']}% · "
             f"الموقع: {b['location']}% · التعليم: {b['education']}%"
+            + (f" · دلالي: {b['semantic']}%" if "semantic" in b else "")
         )
 
         def _render_strengths() -> None:

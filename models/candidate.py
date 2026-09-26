@@ -74,6 +74,9 @@ class Candidate(Base):
     ai_analysis: Mapped[dict] = mapped_column(JSON, default=dict, nullable=True)
     analysis_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # pending / done / failed
     analysis_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # كاش التمثيل الدلالي (Embedding) - يُستخدم في المطابقة الهجينة، لا يُعاد حسابه إلا عند تغيّر النص
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    embedding_meta: Mapped[dict] = mapped_column(JSON, default=dict, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
     @property

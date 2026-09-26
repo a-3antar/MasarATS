@@ -154,8 +154,9 @@ def _render_suitable_jobs(candidate_id: int) -> None:
 
             b = r["breakdown"]
             st.caption(
-                f"المهارات {b['skills']}% · الخبرة {b['experience']}% · "
-                f"الموقع {b['location']}% · التعليم {b['education']}%"
+                f"المهارات: {b['skills']}% · الخبرة: {b['experience']}% · "
+                f"الموقع: {b['location']}% · التعليم: {b['education']}%"
+                + (f" · دلالي: {b['semantic']}%" if "semantic" in b else "")
             )
             for line in r["strengths"]:
                 st.write(line)
