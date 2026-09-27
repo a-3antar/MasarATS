@@ -77,6 +77,10 @@ class InterviewService:
     def list_for_application(self, application_id: int) -> list[Interview]:
         return self._interviews.get_for_application(application_id)
 
+    def list_all_with_context(self):
+        """كل المقابلات مع المرشح والوظيفة المرتبطين بها - لعرض التقويم الموحّد."""
+        return self._interviews.list_all_with_context()
+
     # ------------------------------------------------------------ إجابات المرشح وتقييمها
 
     def answers_map(self, interview_id: int) -> dict[int, InterviewAnswer]:

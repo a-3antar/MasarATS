@@ -1,8 +1,10 @@
-"""نموذج المقابلة (جدول interviews). يرتبط بتقديم واحد (candidate + job) عبر applications."""
+"""نموذج المقابلة (جدول interviews). يرتبط بتقديم واحد (candidate + job) عبر applications.
+custom_questions: أسئلة خاصة بهذا المرشح فقط (يدوية أو مولّدة بالذكاء الاصطناعي) - غير مرتبطة
+ببنك أسئلة الوظيفة (job_questions)، ومخزّنة هنا مباشرة مع إجابة كل سؤال وتقييمه."""
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.constants import INTERVIEW_STATUSES, INTERVIEW_TYPES
@@ -35,8 +37,11 @@ class Interview(Base):
     evaluation: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1 إلى 5
     next_action: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # أسئلة خاصة بهذا المرشح فقط: [{id, question, category, rationale, answer,
+    # eval_score, eval_method, eval_feedback, eval_strengths, eval_concerns}, ...]
+    custom_questions: Mapped[list] = mapped_column(JSON, default=list, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
     def __repr__(self) -> str:
         return f"<Interview id={self.id} application_id={self.application_id} type={self.interview_type}>"
-

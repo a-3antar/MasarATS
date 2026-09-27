@@ -3,7 +3,10 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from models.application import Application
+from models.candidate import Candidate
 from models.interview import Interview
+from models.job import Job
 from repositories.base import BaseRepository
 
 
@@ -18,3 +21,14 @@ class InterviewRepository(BaseRepository[Interview]):
             .order_by(Interview.scheduled_at.desc())
         )
         return list(self._session.scalars(stmt).all())
+
+    def list_all_with_context(self) -> list[tuple[Interview, Candidate, Job]]:
+        """كل المقابلات مع المرشح والوظيفة المرتبطين بها (لعرض التقويم الموحّد)."""
+        stmt = (
+            select(Interview, Candidate, Job)
+            .join(Application, Application.id == Interview.application_id)
+            .join(Candidate, Candidate.id == Application.candidate_id)
+            .join(Job, Job.id == Application.job_id)
+            .order_by(Interview.scheduled_at)
+        )
+        return list(self._session.execute(stmt).all())

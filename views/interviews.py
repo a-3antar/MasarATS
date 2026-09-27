@@ -1,8 +1,15 @@
-"""صفحة إدارة المقابلات: اختيار وظيفة ثم تقديم (مرشح) ثم جدولة/تعديل/حذف مقابلاته.
-الأسئلة مخزّنة في بنك أسئلة مرتبط بالوظيفة (job_questions) وقابل لإعادة الاستخدام مع أي مرشح
-متقدم لنفس الوظيفة. إجابات كل مرشح على هذه الأسئلة مخزّنة بشكل مستقل لكل مقابلة (interview_answers)
-مع تقييم بالذكاء الاصطناعي أو يدوي لكل إجابة."""
+"""صفحة إدارة المقابلات — مقسّمة إلى تبويبين:
 
+📅 التقويم        : كل المقابلات (كل الوظائف والمرشحين) مُجمّعة حسب التاريخ، وكل مقابلة
+                     تُفتح كبطاقة قابلة للتوسيع لتعديل بياناتها وتسجيل/تقييم إجابات المرشح.
+➕ مقابلة جديدة   : اختيار الوظيفة ثم المرشح (التقديم)، ثم معالج بخطوتين:
+                     (1) تفاصيل المقابلة  →  (2) إعداد أسئلة بنك الوظيفة.
+
+الأسئلة مخزّنة في بنك مرتبط بالوظيفة (job_questions) وقابل لإعادة الاستخدام مع أي مرشح آخر
+متقدم لنفس الوظيفة. إجابات كل مرشح على هذه الأسئلة مخزّنة بشكل مستقل لكل مقابلة
+(interview_answers) مع تقييم بالذكاء الاصطناعي أو يدوي لكل إجابة."""
+
+from collections import defaultdict
 from datetime import datetime, timezone
 
 import streamlit as st
@@ -16,10 +23,11 @@ from services.interview_service import InterviewService
 from services.job_service import JobService
 from services.question_bank_service import QuestionBankService
 
-# قائمة الوظائف لا تتغيّر كل ثانية - كاش بسيط يقلّل استعلامات القاعدة عند التنقل بين التبويبات
-_LIST_CACHE_TTL = 30
-
+_LIST_CACHE_TTL = 30  # ثوانٍ - قوائم الوظائف لا تتغيّر كل ثانية
 _MANUAL_OPTIONS = [0, 1, 2, 3, 4, 5]
+
+_STATUS_BADGES = {"Scheduled": "🟦 مجدولة", "Completed": "✅ مكتملة", "Cancelled": "❌ ملغاة"}
+_WEEKDAYS_AR = ["الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
 
 
 @st.cache_data(ttl=_LIST_CACHE_TTL, show_spinner=False)
@@ -27,6 +35,12 @@ def _cached_jobs() -> list:
     with get_db_session() as session:
         return JobService(session).list_all()
 
+
+def _wizard_key(application_id: int) -> str:
+    return f"iv_wizard_{application_id}"
+
+
+# ============================================================== حقول نموذج المقابلة
 
 def _interview_form_fields(key: str, interview=None) -> dict:
     col1, col2 = st.columns(2)
@@ -59,7 +73,7 @@ def _interview_form_fields(key: str, interview=None) -> dict:
 
     questions = st.text_area(
         "ملاحظات عامة (اختياري)", value=(interview.questions or "") if interview else "",
-        key=f"{key}_questions", height=80,
+        key=f"{key}_questions", height=70,
     )
     notes = st.text_area("ملاحظات", value=(interview.notes or "") if interview else "", key=f"{key}_notes")
     feedback = st.text_area(
@@ -89,93 +103,147 @@ def _interview_form_fields(key: str, interview=None) -> dict:
     }
 
 
-# ------------------------------------------------------------ بنك أسئلة الوظيفة
+# ============================================================== بنك أسئلة الوظيفة
 
-def _render_bank_question_row(q) -> None:
-    with st.container(border=True):
-        st.caption(f"{QuestionBankService.category_label(q.category)} · #{q.id}")
-        new_text = st.text_area("السؤال", value=q.question, key=f"bank_q_{q.id}", height=60)
-        col_save, col_del = st.columns(2)
-        with col_save:
-            if st.button("💾 حفظ", key=f"bank_save_{q.id}", width="stretch"):
-                try:
-                    with get_db_session() as session:
-                        QuestionBankService(session).update_question(q.id, new_text)
-                    st.toast("تم الحفظ ✅")
-                    st.rerun()
-                except SmartATSError as exc:
-                    st.error(str(exc))
-        with col_del:
-            if st.button("🗑️ حذف", key=f"bank_del_{q.id}", width="stretch"):
-                try:
-                    with get_db_session() as session:
-                        QuestionBankService(session).delete_question(q.id)
-                    st.toast("تم الحذف 🗑️")
-                    st.rerun()
-                except SmartATSError as exc:
-                    st.error(str(exc))
+def _render_question_bank_manager(job_id: int, key_prefix: str) -> None:
+    """textarea واحدة تعرض/تحرر كل أسئلة الوظيفة دفعة واحدة (سؤال لكل سطر)، مع حفظ يحافظ
+    على إجابات الأسئلة غير المتغيّرة، بالإضافة إلى حذف دقيق لأي سؤال محدد."""
+    with get_db_session() as session:
+        service = QuestionBankService(session)
+        questions = service.list_for_job(job_id)
+        bulk_text = service.questions_as_text(job_id)
+
+    st.caption(
+        "كل سؤال في سطر مستقل (أو افصل بينها بعلامة استفهام). تعديل نص سطر موجود يحافظ على "
+        "إجاباته المسجّلة سابقاً، وإضافة سطر جديد في النهاية يضيف سؤالاً جديداً."
+    )
+    edited_text = st.text_area(
+        "أسئلة الوظيفة", value=bulk_text, key=f"{key_prefix}_bulk_{job_id}", height=180,
+        placeholder="اكتب سؤالاً في كل سطر...",
+    )
+    if st.button("💾 حفظ التعديلات", key=f"{key_prefix}_bulk_save_{job_id}", type="primary"):
+        try:
+            with get_db_session() as session:
+                summary = QuestionBankService(session).sync_bulk_text(job_id, edited_text)
+            parts = []
+            if summary["updated"]:
+                parts.append(f"تعديل {summary['updated']}")
+            if summary["added"]:
+                parts.append(f"إضافة {summary['added']}")
+            if summary["removed"]:
+                parts.append(f"حذف {summary['removed']}")
+            st.toast("تم الحفظ ✅ " + (" · ".join(parts) if parts else ""))
+            st.rerun()
+        except SmartATSError as exc:
+            st.error(str(exc))
+
+    if questions:
+        with st.expander(f"🗑️ حذف سؤال محدد ({len(questions)})"):
+            for q in questions:
+                col_text, col_del = st.columns([5, 1])
+                with col_text:
+                    label = QuestionBankService.category_label(q.category)
+                    st.write(f"**#{q.id}** · {label} — {q.question}")
+                with col_del:
+                    if st.button("🗑️", key=f"{key_prefix}_del_{q.id}", width="stretch"):
+                        try:
+                            with get_db_session() as session:
+                                QuestionBankService(session).delete_question(q.id)
+                            st.toast("تم حذف السؤال 🗑️")
+                            st.rerun()
+                        except SmartATSError as exc:
+                            st.error(str(exc))
 
 
 def _render_question_bank(job_id: int) -> None:
     with st.expander("🗂️ بنك أسئلة الوظيفة (مشترك لكل المرشحين المتقدمين لهذه الوظيفة)"):
-        with get_db_session() as session:
-            questions = QuestionBankService(session).list_for_job(job_id)
-
-        if questions:
-            for q in questions:
-                _render_bank_question_row(q)
-        else:
-            st.caption("لا توجد أسئلة بعد. أضفها يدوياً أدناه، أو ولّدها بالذكاء الاصطناعي من قسم جدولة مقابلة.")
-
-        st.markdown("**➕ إضافة أسئلة جديدة**")
-        raw = st.text_area(
-            "اكتب سؤالاً أو أكثر — افصل بينها بسطر جديد أو علامة استفهام",
-            key=f"bank_add_{job_id}", height=100,
-        )
-        if st.button("➕ إضافة", key=f"bank_add_btn_{job_id}"):
-            try:
-                with get_db_session() as session:
-                    added = QuestionBankService(session).add_questions_from_text(job_id, raw)
-                st.toast(f"تمت إضافة {len(added)} سؤال ✅")
-                st.rerun()
-            except SmartATSError as exc:
-                st.error(str(exc))
+        _render_question_bank_manager(job_id, key_prefix="bank")
 
 
-# ------------------------------------------------------------ جدولة مقابلة جديدة
+# ============================================================== معالج مقابلة جديدة (خطوتان)
 
-def _render_add_interview(application_id: int, candidate, job) -> None:
-    with st.expander("➕ جدولة مقابلة جديدة"):
-        if st.button(
-            "🤖 توليد أسئلة إضافية بالذكاء الاصطناعي (بناءً على سيرة هذا المرشح)",
-            key=f"gen_ai_{application_id}",
-        ):
-            try:
-                from ai.interview_generator import generate_interview_questions
+def _render_new_interview_wizard(application_id: int, candidate, job) -> None:
+    key = _wizard_key(application_id)
+    wizard = st.session_state.get(key)
 
-                with st.spinner("جاري توليد الأسئلة..."):
-                    result = generate_interview_questions(candidate, job)
-                with get_db_session() as session:
-                    added = QuestionBankService(session).add_ai_questions(job.id, result)
-                st.toast(f"تمت إضافة {len(added)} سؤال لبنك أسئلة الوظيفة ✅")
-                st.rerun()
-            except SmartATSError as exc:
-                st.error(str(exc))
+    if wizard is None:
+        if st.button("➕ بدء جدولة المقابلة", key=f"new_iv_btn_{application_id}", type="primary"):
+            st.session_state[key] = {"step": "details"}
+            st.rerun()
+        return
 
-        with st.form(f"new_interview_{application_id}", clear_on_submit=True):
-            values = _interview_form_fields(f"new_{application_id}")
-            submitted = st.form_submit_button("حفظ المقابلة", type="primary")
-        if submitted:
-            try:
-                with get_db_session() as session:
-                    InterviewService(session).schedule(application_id, **values)
-                st.toast("تمت جدولة المقابلة ✅")
-                st.rerun()
-            except SmartATSError as exc:
-                st.error(str(exc))
+    if wizard["step"] == "details":
+        _render_wizard_details_step(application_id, key)
+        return
+
+    if wizard["step"] == "questions":
+        _render_wizard_questions_step(application_id, candidate, job, key, wizard["interview_id"])
+        return
 
 
-# ------------------------------------------------------------ إجابات المرشح وتقييمها
+def _render_wizard_details_step(application_id: int, key: str) -> None:
+    st.markdown("##### 1️⃣ تفاصيل المقابلة")
+    with st.form(f"new_interview_{application_id}"):
+        values = _interview_form_fields(f"new_{application_id}")
+        col_next, col_cancel = st.columns(2)
+        with col_next:
+            submitted = st.form_submit_button("التالي: إعداد الأسئلة ▶", type="primary", width="stretch")
+        with col_cancel:
+            cancelled = st.form_submit_button("إلغاء", width="stretch")
+
+    if cancelled:
+        st.session_state.pop(key, None)
+        st.rerun()
+
+    if submitted:
+        try:
+            with get_db_session() as session:
+                interview = InterviewService(session).schedule(application_id, **values)
+            st.session_state[key] = {"step": "questions", "interview_id": interview.id}
+            st.toast("تم حفظ تفاصيل المقابلة ✅")
+            st.rerun()
+        except SmartATSError as exc:
+            st.error(str(exc))
+
+
+def _render_wizard_questions_step(application_id: int, candidate, job, key: str, interview_id: int) -> None:
+    st.markdown("##### 2️⃣ إعداد أسئلة المقابلة")
+    st.caption(
+        "هذه الأسئلة تُحفظ في بنك أسئلة الوظيفة ويمكن إعادة استخدامها مع أي مرشح آخر متقدم لنفس الوظيفة."
+    )
+
+    if st.button(
+        "🤖 توليد أسئلة بالذكاء الاصطناعي (بناءً على سيرة هذا المرشح)",
+        key=f"wiz_gen_ai_{application_id}",
+    ):
+        try:
+            from ai.interview_generator import generate_interview_questions
+
+            with st.spinner("جاري توليد الأسئلة..."):
+                result = generate_interview_questions(candidate, job)
+            with get_db_session() as session:
+                added = QuestionBankService(session).add_ai_questions(job.id, result)
+            st.toast(f"تمت إضافة {len(added)} سؤال ✅")
+            st.rerun()
+        except SmartATSError as exc:
+            st.error(str(exc))
+
+    _render_question_bank_manager(job.id, key_prefix=f"wiz_{interview_id}")
+
+    st.divider()
+    col_done, col_back = st.columns(2)
+    with col_done:
+        if st.button("✅ إنهاء وحفظ المقابلة", type="primary", key=f"wiz_done_{application_id}", width="stretch"):
+            st.session_state.pop(key, None)
+            st.toast("تمت جدولة المقابلة ✅")
+            st.rerun()
+    with col_back:
+        if st.button("◀ رجوع لتفاصيل المقابلة", key=f"wiz_back_{application_id}", width="stretch"):
+            st.session_state[key] = {"step": "details"}
+            st.rerun()
+
+
+# ============================================================== إجابات المرشح وتقييمها
 
 def _render_answer_row(interview_id: int, question, answer, job, idx: int) -> None:
     qid = question.id
@@ -245,19 +313,26 @@ def _render_interview_answers(interview_id: int, job) -> None:
         answers_map = InterviewService(session).answers_map(interview_id)
 
     if not bank_questions:
-        st.caption("لا توجد أسئلة في بنك هذه الوظيفة بعد. أضفها من قسم «بنك أسئلة الوظيفة» أعلاه.")
+        st.caption("لا توجد أسئلة في بنك هذه الوظيفة بعد. أضفها من قسم «بنك أسئلة الوظيفة».")
         return
 
     for idx, q in enumerate(bank_questions, start=1):
         _render_answer_row(interview_id, q, answers_map.get(q.id), job, idx)
 
 
-# ------------------------------------------------------------ بطاقة المقابلة
+# ============================================================== بطاقة مقابلة واحدة
 
-def _render_interview_card(interview, candidate, job) -> None:
-    label = f"{interview.interview_type} · {interview.status}"
-    if interview.scheduled_at:
-        label += f" · {interview.scheduled_at.strftime('%Y-%m-%d %H:%M')}"
+def _interview_summary_line(interview, candidate, job) -> str:
+    time_part = interview.scheduled_at.strftime("%H:%M") if interview.scheduled_at else "--:--"
+    status_badge = _STATUS_BADGES.get(interview.status, interview.status)
+    return f"🕐 {time_part}  ·  👤 {candidate.full_name}  ·  💼 {job.title}  ·  {interview.interview_type}  ·  {status_badge}"
+
+
+def _render_interview_card(interview, candidate, job, *, show_summary: bool = False) -> None:
+    label = _interview_summary_line(interview, candidate, job) if show_summary else (
+        f"{interview.interview_type} · {_STATUS_BADGES.get(interview.status, interview.status)}"
+        + (f" · {interview.scheduled_at.strftime('%Y-%m-%d %H:%M')}" if interview.scheduled_at else "")
+    )
 
     with st.expander(label):
         with st.form(f"edit_interview_{interview.id}"):
@@ -287,17 +362,67 @@ def _render_interview_card(interview, candidate, job) -> None:
                 st.error(str(exc))
 
 
-def render() -> None:
-    st.header("🗓️ المقابلات")
+# ============================================================== تبويب 1: التقويم
 
+def _render_calendar_tab() -> None:
+    with get_db_session() as session:
+        rows = InterviewService(session).list_all_with_context()
+
+    if not rows:
+        st.info("لا توجد مقابلات مجدولة بعد. استخدم تبويب «➕ مقابلة جديدة» لإضافة أول مقابلة.")
+        return
+
+    total = len(rows)
+    now = datetime.now(timezone.utc)
+    upcoming = sum(
+        1 for iv, _, _ in rows
+        if iv.status == "Scheduled" and iv.scheduled_at and iv.scheduled_at.replace(tzinfo=timezone.utc) >= now
+    )
+    completed = sum(1 for iv, _, _ in rows if iv.status == "Completed")
+    cancelled = sum(1 for iv, _, _ in rows if iv.status == "Cancelled")
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("📋 الإجمالي", total)
+    col2.metric("🟦 قادمة", upcoming)
+    col3.metric("✅ مكتملة", completed)
+    col4.metric("❌ ملغاة", cancelled)
+    st.divider()
+
+    status_filter = st.multiselect(
+        "تصفية حسب الحالة", INTERVIEW_STATUSES, default=INTERVIEW_STATUSES, key="cal_status_filter",
+    )
+    filtered = [r for r in rows if r[0].status in status_filter]
+    if not filtered:
+        st.warning("لا توجد مقابلات مطابقة لهذا الفلتر.")
+        return
+
+    grouped: dict = defaultdict(list)
+    for interview, candidate, job in filtered:
+        day = interview.scheduled_at.date() if interview.scheduled_at else None
+        grouped[day].append((interview, candidate, job))
+
+    for day in sorted(grouped.keys(), key=lambda d: (d is None, d)):
+        items = grouped[day]
+        if day is None:
+            st.markdown("##### 📌 بدون تاريخ محدد")
+        else:
+            weekday = _WEEKDAYS_AR[day.weekday()]
+            st.markdown(f"##### 📅 {day.strftime('%Y-%m-%d')} — {weekday}  ·  {len(items)} مقابلة")
+        for interview, candidate, job in sorted(items, key=lambda r: r[0].scheduled_at or datetime.min.replace(tzinfo=timezone.utc)):
+            _render_interview_card(interview, candidate, job, show_summary=True)
+        st.write("")
+
+
+# ============================================================== تبويب 2: مقابلة جديدة
+
+def _render_new_interview_tab() -> None:
     jobs = _cached_jobs()
-
     if not jobs:
         st.info("أضف وظيفة أولاً من صفحة «الوظائف».")
         return
 
     job_labels = {f"{j.title} (#{j.id})": j.id for j in jobs}
-    selected_job_label = st.selectbox("اختر الوظيفة", list(job_labels.keys()), key="iv_job_select")
+    selected_job_label = st.selectbox("1. اختر الوظيفة", list(job_labels.keys()), key="iv_job_select")
     job_id = job_labels[selected_job_label]
 
     with get_db_session() as session:
@@ -312,6 +437,7 @@ def render() -> None:
 
     st.divider()
     _render_question_bank(job_id)
+    st.divider()
 
     if not app_rows:
         st.info("لا يوجد مرشحون مطابَقون لهذه الوظيفة بعد. شغّل المطابقة من صفحة «المطابقة» أولاً.")
@@ -321,18 +447,24 @@ def render() -> None:
         (f"{c.full_name} · {status} · {score}%" if score is not None else f"{c.full_name} · {status}"): (app_id, c)
         for app_id, c, status, score in app_rows
     }
-    selected_app_label = st.selectbox("اختر المرشح (التقديم)", list(app_labels.keys()), key="iv_app_select")
+    selected_app_label = st.selectbox("2. اختر المرشح (التقديم)", list(app_labels.keys()), key="iv_app_select")
     application_id, candidate = app_labels[selected_app_label]
 
-    with get_db_session() as session:
-        interviews = InterviewService(session).list_for_application(application_id)
-
     st.divider()
-    _render_add_interview(application_id, candidate, job)
+    _render_new_interview_wizard(application_id, candidate, job)
 
-    if interviews:
-        st.subheader(f"المقابلات المجدولة ({len(interviews)})")
-        for interview in interviews:
-            _render_interview_card(interview, candidate, job)
-    else:
-        st.caption("لا توجد مقابلات مجدولة لهذا التقديم بعد.")
+    with get_db_session() as session:
+        existing = InterviewService(session).list_for_application(application_id)
+    if existing:
+        st.divider()
+        st.caption(f"لهذا المرشح {len(existing)} مقابلة مجدولة مسبقاً على هذه الوظيفة (تظهر في تبويب «📅 التقويم»).")
+
+
+def render() -> None:
+    st.header("🗓️ المقابلات")
+
+    tab_calendar, tab_new = st.tabs(["📅 التقويم", "➕ مقابلة جديدة"])
+    with tab_calendar:
+        _render_calendar_tab()
+    with tab_new:
+        _render_new_interview_tab()

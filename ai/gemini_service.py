@@ -213,6 +213,34 @@ class GeminiService(AIProvider):
             logger.error("Gemini interview generation failed: %s | raw_response=%s", exc, raw_text[:2000])
             raise AIServiceError(f"فشل توليد أسئلة المقابلة: {exc}") from exc
 
+    def generate_job_interview_questions(self, job_text: str):
+        """يولّد بنك أسئلة عاماً لوظيفة بدون مرشح محدد. يرفع AIServiceError عند الفشل."""
+        from ai.prompts import JOB_INTERVIEW_QUESTIONS_PROMPT_TEMPLATE
+        from ai.schemas import InterviewQuestions
+
+        raw_text = ""
+        try:
+            client = self._client()
+            prompt = JOB_INTERVIEW_QUESTIONS_PROMPT_TEMPLATE.format(job_text=job_text[:4000])
+            response = client.models.generate_content(
+                model=self._settings.ai_model,
+                contents=prompt,
+                config={
+                    "temperature": self._settings.ai_temperature,
+                    "response_mime_type": "application/json",
+                    "response_schema": _pydantic_to_gemini_schema(InterviewQuestions),
+                    "max_output_tokens": 4096,
+                },
+            )
+            raw_text = response.text
+            return InterviewQuestions.model_validate(json.loads(raw_text))
+        except ValidationError as exc:
+            logger.error("Job interview questions failed validation: %s | raw_response=%s", exc, raw_text[:2000])
+            raise AIServiceError("استجابة الذكاء الاصطناعي لم تطابق الشكل المتوقع.") from exc
+        except Exception as exc:
+            logger.error("Gemini job question generation failed: %s | raw_response=%s", exc, raw_text[:2000])
+            raise AIServiceError(f"فشل توليد أسئلة الوظيفة: {exc}") from exc
+
     def analyze_candidate(self, candidate_text: str):
         """يولّد تحليلاً شاملاً للمرشح (مستوى وظيفي، نقاط قوة، فجوات، وظائف مناسبة). يرفع AIServiceError عند الفشل."""
         from ai.prompts import CV_ANALYSIS_PROMPT_TEMPLATE

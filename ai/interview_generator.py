@@ -1,4 +1,5 @@
-"""توليد أسئلة مقابلة عبر Gemini بناءً على وصف الوظيفة وسيرة المرشح الفعلية."""
+"""توليد أسئلة مقابلة عبر Gemini: إما مبنية على وصف وظيفة وسيرة مرشح فعلية معاً، أو أسئلة
+عامة للوظيفة وحدها (بدون مرشح محدد) لتغذية بنك أسئلة الوظيفة مسبقاً."""
 
 from ai.schemas import InterviewQuestions
 from models.candidate import Candidate
@@ -41,6 +42,14 @@ def generate_interview_questions(candidate: Candidate, job: Job) -> InterviewQue
     from ai.gemini_service import GeminiService
 
     return GeminiService().generate_interview_questions(_job_context(job), _candidate_context(candidate))
+
+
+def generate_questions_for_job(job: Job) -> InterviewQuestions:
+    """يولّد بنك أسئلة عاماً لوظيفة، بدون الاعتماد على سيرة مرشح محدد. يرفع AIServiceError عند الفشل."""
+    from ai.gemini_service import GeminiService
+
+    return GeminiService().generate_job_interview_questions(_job_context(job))
+
 
 def evaluate_interview_answer(job: Job, question: str, answer: str):
     """يقيّم إجابة مرشح على سؤال مقابلة واحد بالنسبة لمتطلبات الوظيفة. يرفع AIServiceError عند الفشل."""

@@ -1,4 +1,5 @@
-"""صفحة إدارة الوظائف: إضافة / عرض / تعديل / حذف - بنفس فئات مهارات المرشحين، مع توليد تلقائي بالذكاء الاصطناعي."""
+"""صفحة إدارة الوظائف: إضافة / عرض / تعديل / حذف - بنفس فئات مهارات المرشحين، مع توليد تلقائي بالذكاء الاصطناعي.
+لوحة التعديل مقسّمة لتبويبين: ✏️ تعديل بيانات الوظيفة، و🗂️ بنك أسئلة المقابلة الخاص بها."""
 
 import re
 
@@ -11,6 +12,7 @@ from database.database import get_db_session
 from models.job import Job
 from services.job_service import JobService
 from services.export_service import ExportService
+from services.question_bank_service import QuestionBankService
 
 
 # نفس فئات مهارات المرشح حتى تكون المطابقة متناسقة
@@ -185,15 +187,10 @@ def _render_add_form() -> None:
                 st.error(str(exc))
 
 
-def _render_edit_panel(job_id: int) -> None:
-    with get_db_session() as session:
-        job = JobService(session).get_by_id(job_id)
-    if job is None:
-        st.warning("الوظيفة غير موجودة.")
-        return
+# ------------------------------------------------------------ تبويب: تعديل بيانات الوظيفة
 
+def _render_job_details_tab(job_id: int, job: Job) -> None:
     edit_key = f"edit_{job_id}"
-    st.subheader(f"✏️ تعديل: {job.title}")
     _seed_form_state(edit_key, job)
     _render_ai_job_generator(edit_key)
     with st.form(f"edit_job_form_{job_id}"):
@@ -226,6 +223,77 @@ def _render_edit_panel(job_id: int) -> None:
             st.rerun()
         except SmartATSError as exc:
             st.error(str(exc))
+
+
+# ------------------------------------------------------------ تبويب: بنك أسئلة المقابلة
+
+def _render_job_questions_tab(job_id: int, job: Job) -> None:
+    st.caption(
+        "هذه الأسئلة تُحفظ في بنك أسئلة هذه الوظيفة، ويمكن إعادة استخدامها مع أي مرشح "
+        "يتقدّم لها لاحقاً من صفحة «المقابلات». كل سؤال في سطر مستقل (أو افصل بينها بعلامة استفهام)."
+    )
+
+    with get_db_session() as session:
+        current_text = QuestionBankService(session).as_text(job_id)
+
+    edited_text = st.text_area(
+        "أسئلة الوظيفة", value=current_text, height=220, key=f"job_q_bulk_{job_id}",
+        placeholder="اكتب سؤالاً في كل سطر...",
+    )
+
+    col_save, col_regen = st.columns(2)
+    with col_save:
+        if st.button("💾 حفظ بنك الأسئلة", key=f"job_q_save_{job_id}", type="primary", width="stretch"):
+            try:
+                with get_db_session() as session:
+                    summary = QuestionBankService(session).sync_bulk_text(job_id, edited_text)
+                parts = []
+                if summary["updated"]:
+                    parts.append(f"تعديل {summary['updated']}")
+                if summary["added"]:
+                    parts.append(f"إضافة {summary['added']}")
+                if summary["removed"]:
+                    parts.append(f"حذف {summary['removed']}")
+                st.toast("تم الحفظ ✅ " + (" · ".join(parts) if parts else ""))
+                st.rerun()
+            except SmartATSError as exc:
+                st.error(str(exc))
+    with col_regen:
+        if st.button(
+            "🔄 إعادة توليد الأسئلة بالذكاء الاصطناعي", key=f"job_q_regen_{job_id}", width="stretch"
+        ):
+            try:
+                from ai.interview_generator import generate_questions_for_job
+
+                with st.spinner("جاري توليد الأسئلة..."):
+                    result = generate_questions_for_job(job)
+                with get_db_session() as session:
+                    added = QuestionBankService(session).add_ai_questions(job_id, result)
+                st.toast(f"تمت إضافة {len(added)} سؤال جديد بالذكاء الاصطناعي ✅")
+                st.rerun()
+            except SmartATSError as exc:
+                st.error(str(exc))
+
+    st.caption(
+        "ملاحظة: التوليد بالذكاء الاصطناعي يُضيف أسئلة جديدة للبنك الحالي ولا يحذف أو "
+        "يستبدل الأسئلة الموجودة ولا إجابات المرشحين المسجّلة عليها."
+    )
+
+
+def _render_edit_panel(job_id: int) -> None:
+    with get_db_session() as session:
+        job = JobService(session).get_by_id(job_id)
+    if job is None:
+        st.warning("الوظيفة غير موجودة.")
+        return
+
+    st.subheader(f"✏️ تعديل: {job.title}")
+
+    tab_details, tab_questions = st.tabs(["✏️ تعديل بيانات الوظيفة", "🗂️ بنك أسئلة المقابلة"])
+    with tab_details:
+        _render_job_details_tab(job_id, job)
+    with tab_questions:
+        _render_job_questions_tab(job_id, job)
 
 
 def _to_row(j: Job) -> dict:
