@@ -1,13 +1,17 @@
-"""خدمة المقابلات: جدولة المقابلات ضمن تقديم مرشح على وظيفة، وتسجيل نتائجها."""
+"""خدمة المقابلات: جدولة المقابلات، وإدارة إجابات المرشح على بنك أسئلة الوظيفة وتقييمها."""
 
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from core.constants import INTERVIEW_STATUSES, INTERVIEW_TYPES
 from core.exceptions import ValidationError
 from core.logging import get_logger
 from models.interview import Interview
+from models.interview_answer import InterviewAnswer
 from repositories.application_repository import ApplicationRepository
+from repositories.interview_answer_repository import InterviewAnswerRepository
 from repositories.interview_repository import InterviewRepository
+from repositories.job_question_repository import JobQuestionRepository
 
 logger = get_logger(__name__)
 
@@ -21,6 +25,9 @@ class InterviewService:
     def __init__(self, session: Session) -> None:
         self._interviews = InterviewRepository(session)
         self._applications = ApplicationRepository(session)
+        self._answers = InterviewAnswerRepository(session)
+        self._job_questions = JobQuestionRepository(session)
+        self._session = session
 
     @staticmethod
     def _validate_fields(fields: dict) -> None:
@@ -55,6 +62,7 @@ class InterviewService:
 
     def delete(self, interview_id: int) -> None:
         interview = self._get_or_raise(interview_id)
+        self._session.execute(delete(InterviewAnswer).where(InterviewAnswer.interview_id == interview_id))
         self._interviews.delete(interview)
 
     def _get_or_raise(self, interview_id: int) -> Interview:
@@ -63,6 +71,55 @@ class InterviewService:
             raise ValidationError("المقابلة غير موجودة.")
         return interview
 
+    def get_by_id(self, interview_id: int) -> Interview | None:
+        return self._interviews.get_by_id(interview_id)
+
     def list_for_application(self, application_id: int) -> list[Interview]:
         return self._interviews.get_for_application(application_id)
 
+    # ------------------------------------------------------------ إجابات المرشح وتقييمها
+
+    def answers_map(self, interview_id: int) -> dict[int, InterviewAnswer]:
+        """إجابات هذه المقابلة كـ dict مفتاحه question_id، لدمجها مع بنك أسئلة الوظيفة عند العرض."""
+        return {a.question_id: a for a in self._answers.get_for_interview(interview_id)}
+
+    def _get_or_create_answer(self, interview_id: int, question_id: int) -> InterviewAnswer:
+        answer = self._answers.get_one(interview_id, question_id)
+        if answer is None:
+            if self._job_questions.get_by_id(question_id) is None:
+                raise ValidationError("السؤال غير موجود.")
+            answer = InterviewAnswer(interview_id=interview_id, question_id=question_id)
+            self._answers.add(answer)
+        return answer
+
+    def save_answer(self, interview_id: int, question_id: int, text: str) -> InterviewAnswer:
+        answer = self._get_or_create_answer(interview_id, question_id)
+        answer.answer = (text or "").strip() or None
+        return answer
+
+    def evaluate_answer(self, interview_id: int, question_id: int, job) -> InterviewAnswer:
+        """يقيّم إجابة المرشح على سؤال محدد بالذكاء الاصطناعي بناءً على متطلبات الوظيفة."""
+        answer = self._get_or_create_answer(interview_id, question_id)
+        if not (answer.answer or "").strip():
+            raise ValidationError("أدخل إجابة المرشح أولاً.")
+
+        question = self._job_questions.get_by_id(question_id)
+        from ai.interview_generator import evaluate_interview_answer
+
+        evaluation = evaluate_interview_answer(job, question.question, answer.answer)
+        answer.eval_score = evaluation.score
+        answer.eval_method = "ai"
+        answer.eval_feedback = evaluation.feedback
+        answer.eval_strengths = evaluation.strengths
+        answer.eval_concerns = evaluation.concerns
+        return answer
+
+    def set_manual_score(self, interview_id: int, question_id: int, score: int | None) -> InterviewAnswer:
+        answer = self._get_or_create_answer(interview_id, question_id)
+        if score is not None and not (1 <= score <= 5):
+            raise ValidationError("التقييم يجب أن يكون بين 1 و5.")
+        answer.eval_score = score
+        answer.eval_method = "manual" if score else None
+        if score:
+            answer.eval_feedback, answer.eval_strengths, answer.eval_concerns = None, [], []
+        return answer

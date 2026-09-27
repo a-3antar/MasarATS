@@ -67,14 +67,16 @@ def _add_missing_columns() -> None:
                 connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {column.name} {column_type}"))
                 logger.info("Added missing column %s.%s", table.name, column.name)
 
-
 def init_db() -> None:
     """إنشاء كل الجداول المعرّفة إن لم تكن موجودة + إضافة الأعمدة الناقصة. تُستدعى عند بدء التطبيق."""
-    from models import application, candidate, department, interview, job, position, user  # noqa: F401
+    from models import (
+        application, candidate, department, interview, interview_answer,
+        job, job_question, position, user,
+    )  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()
     logger.info("Database initialized (tables ensured).")
-    
+
 @contextmanager
 def get_db_session() -> Generator[Session, None, None]:
     """

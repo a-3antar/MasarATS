@@ -180,3 +180,25 @@ class JobRequirements(BaseModel):
     @classmethod
     def _normalize_job_lists(cls, value: Any) -> Any:
         return _coerce_to_str_list(value)
+
+class AnswerEvaluation(BaseModel):
+    """تقييم إجابة مرشح على سؤال مقابلة واحد."""
+
+    score: int = Field(ge=1, le=5)
+    strengths: list[str] = Field(default_factory=list)
+    concerns: list[str] = Field(default_factory=list)
+    feedback: str | None = None
+
+    @field_validator("strengths", "concerns", mode="before")
+    @classmethod
+    def _normalize_lists(cls, value: Any) -> Any:
+        return _coerce_to_str_list(value)
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def _clamp_score(cls, value: Any) -> Any:
+        try:
+            score = int(value)
+        except (TypeError, ValueError):
+            return 3
+        return min(max(score, 1), 5)

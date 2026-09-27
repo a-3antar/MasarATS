@@ -268,3 +268,33 @@ class GeminiService(AIProvider):
         except Exception as exc:
             logger.error("Gemini job analysis failed: %s | raw_response=%s", exc, raw_text[:2000])
             raise AIServiceError(f"فشل تحليل وصف الوظيفة: {exc}") from exc
+
+    def evaluate_interview_answer(self, job_text: str, question: str, answer: str):
+        """يقيّم إجابة مرشح على سؤال مقابلة واحد. يرفع AIServiceError عند الفشل."""
+        from ai.prompts import ANSWER_EVALUATION_PROMPT_TEMPLATE
+        from ai.schemas import AnswerEvaluation
+
+        raw_text = ""
+        try:
+            client = self._client()
+            prompt = ANSWER_EVALUATION_PROMPT_TEMPLATE.format(
+                job_text=job_text[:3000], question=question[:1000], answer=answer[:4000]
+            )
+            response = client.models.generate_content(
+                model=self._settings.ai_model,
+                contents=prompt,
+                config={
+                    "temperature": self._settings.ai_temperature,
+                    "response_mime_type": "application/json",
+                    "response_schema": _pydantic_to_gemini_schema(AnswerEvaluation),
+                    "max_output_tokens": 1024,
+                },
+            )
+            raw_text = response.text
+            return AnswerEvaluation.model_validate(json.loads(raw_text))
+        except ValidationError as exc:
+            logger.error("Answer evaluation failed validation: %s | raw_response=%s", exc, raw_text[:1000])
+            raise AIServiceError("استجابة الذكاء الاصطناعي لم تطابق الشكل المتوقع.") from exc
+        except Exception as exc:
+            logger.error("Gemini answer evaluation failed: %s | raw_response=%s", exc, raw_text[:1000])
+            raise AIServiceError(f"فشل تقييم الإجابة: {exc}") from exc

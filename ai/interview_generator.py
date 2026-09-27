@@ -41,3 +41,9 @@ def generate_interview_questions(candidate: Candidate, job: Job) -> InterviewQue
     from ai.gemini_service import GeminiService
 
     return GeminiService().generate_interview_questions(_job_context(job), _candidate_context(candidate))
+
+def evaluate_interview_answer(job: Job, question: str, answer: str):
+    """يقيّم إجابة مرشح على سؤال مقابلة واحد بالنسبة لمتطلبات الوظيفة. يرفع AIServiceError عند الفشل."""
+    from ai.gemini_service import GeminiService
+
+    return GeminiService().evaluate_interview_answer(_job_context(job), question, answer)

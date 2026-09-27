@@ -8,6 +8,12 @@ from models.job import Job
 from repositories.application_repository import ApplicationRepository
 from repositories.job_repository import JobRepository
 
+# أضف الاستيرادات:
+from sqlalchemy import delete, select
+from models.interview_answer import InterviewAnswer
+from models.job_question import JobQuestion
+
+
 # الحقول المسموح تعديلها من الواجهة (قائمة بيضاء)
 _EDITABLE_FIELDS = {
     "title", "department", "location", "required_experience_years", "status", "description",
@@ -69,3 +75,19 @@ class JobService:
 
     def get_by_id(self, job_id: int) -> Job | None:
         return self._jobs.get_by_id(job_id)
+
+
+# عدّل delete_job:
+    def delete_job(self, job_id: int) -> None:
+        """يحذف الوظيفة وكل التقديمات وأسئلة بنك الوظيفة وإجاباتها المرتبطة بها."""
+        job = self._get_or_raise(job_id)
+        self._applications.delete_for_job(job_id)
+
+        question_ids = self._session.scalars(
+            select(JobQuestion.id).where(JobQuestion.job_id == job_id)
+        ).all()
+        if question_ids:
+            self._session.execute(delete(InterviewAnswer).where(InterviewAnswer.question_id.in_(question_ids)))
+        self._session.execute(delete(JobQuestion).where(JobQuestion.job_id == job_id))
+
+        self._jobs.delete(job)
