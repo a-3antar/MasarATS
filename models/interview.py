@@ -1,10 +1,8 @@
-"""نموذج المقابلة (جدول interviews). يرتبط بتقديم واحد (candidate + job) عبر applications.
-custom_questions: أسئلة خاصة بهذا المرشح فقط (يدوية أو مولّدة بالذكاء الاصطناعي) - غير مرتبطة
-ببنك أسئلة الوظيفة (job_questions)، ومخزّنة هنا مباشرة مع إجابة كل سؤال وتقييمه."""
+"""نموذج المقابلة (جدول interviews). يرتبط بتقديم واحد (candidate + job) عبر applications."""
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.constants import INTERVIEW_STATUSES, INTERVIEW_TYPES
@@ -37,9 +35,10 @@ class Interview(Base):
     evaluation: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1 إلى 5
     next_action: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # أسئلة خاصة بهذا المرشح فقط: [{id, question, category, rationale, answer,
-    # eval_score, eval_method, eval_feedback, eval_strengths, eval_concerns}, ...]
-    custom_questions: Mapped[list] = mapped_column(JSON, default=list, nullable=True)
+    # التقييم النهائي للمقابلة (من 100): محسوب من تقييمات الإجابات، أو مُعدَّل يدوياً من المُقابِل
+    overall_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    overall_method: Mapped[str | None] = mapped_column(String(10), nullable=True)  # "auto" أو "manual"
+    overall_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 

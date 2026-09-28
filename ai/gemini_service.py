@@ -22,9 +22,14 @@ from core.logging import get_logger
 logger = get_logger(__name__)
 
 _ATTACHED_FILE_NOTE = (
-        "(السيرة الذاتية مرفقة كملف مع هذا الطلب. اقرأ نصها مباشرة بما في ذلك الصفحات الممسوحة، "
-        "وإذا كان التصميم بعمودين فاقرأ كل عمود كاملاً، ثم استخرج البيانات.)"
-    )
+    "(السيرة الذاتية مرفقة كملف مع هذا الطلب. اقرأ نصها مباشرة بما في ذلك الصفحات الممسوحة، "
+    "وإذا كان التصميم بعمودين فاقرأ كل عمود كاملاً، ثم استخرج البيانات.)"
+)
+
+# حدود حجم سياق الإجابات السابقة داخل prompt تقييم الإجابة
+_PRIOR_CONTEXT_MAX_CHARS = 4000
+_NO_PRIOR_CONTEXT = "لا يوجد"
+
 
 def _pydantic_to_gemini_schema(schema: type[BaseModel]) -> dict[str, Any]:
     """
@@ -67,6 +72,14 @@ def _pydantic_to_gemini_schema(schema: type[BaseModel]) -> dict[str, Any]:
     return convert(json_schema)
 
 
+def _format_prior_context(prior_qa: list[tuple[str, str]] | None) -> str:
+    """يحوّل (سؤال، إجابة) لأسئلة المقابلة الأخرى إلى نص سياق مقتطع الحجم للـ prompt."""
+    if not prior_qa:
+        return _NO_PRIOR_CONTEXT
+    block = "\n\n".join(f"س: {question}\nج: {answer}" for question, answer in prior_qa)
+    return block[:_PRIOR_CONTEXT_MAX_CHARS] or _NO_PRIOR_CONTEXT
+
+
 class GeminiService(AIProvider):
     """مزوّد الذكاء الاصطناعي المعتمد على Google Gemini (عبر google-genai)."""
 
@@ -86,8 +99,6 @@ class GeminiService(AIProvider):
     def _client(self):
         """عميل مستقل لكل نداء - يستخدم المفتاح التالي في التبديل الدوري. آمن للتوازي."""
         return self._genai.Client(api_key=get_next_key())
-
-   
 
     def extract_structured(self, text: str, schema: type[BaseModel]) -> BaseModel:
         from ai.prompts import CV_EXTRACTION_PROMPT_TEMPLATE
@@ -213,34 +224,6 @@ class GeminiService(AIProvider):
             logger.error("Gemini interview generation failed: %s | raw_response=%s", exc, raw_text[:2000])
             raise AIServiceError(f"فشل توليد أسئلة المقابلة: {exc}") from exc
 
-    def generate_job_interview_questions(self, job_text: str):
-        """يولّد بنك أسئلة عاماً لوظيفة بدون مرشح محدد. يرفع AIServiceError عند الفشل."""
-        from ai.prompts import JOB_INTERVIEW_QUESTIONS_PROMPT_TEMPLATE
-        from ai.schemas import InterviewQuestions
-
-        raw_text = ""
-        try:
-            client = self._client()
-            prompt = JOB_INTERVIEW_QUESTIONS_PROMPT_TEMPLATE.format(job_text=job_text[:4000])
-            response = client.models.generate_content(
-                model=self._settings.ai_model,
-                contents=prompt,
-                config={
-                    "temperature": self._settings.ai_temperature,
-                    "response_mime_type": "application/json",
-                    "response_schema": _pydantic_to_gemini_schema(InterviewQuestions),
-                    "max_output_tokens": 4096,
-                },
-            )
-            raw_text = response.text
-            return InterviewQuestions.model_validate(json.loads(raw_text))
-        except ValidationError as exc:
-            logger.error("Job interview questions failed validation: %s | raw_response=%s", exc, raw_text[:2000])
-            raise AIServiceError("استجابة الذكاء الاصطناعي لم تطابق الشكل المتوقع.") from exc
-        except Exception as exc:
-            logger.error("Gemini job question generation failed: %s | raw_response=%s", exc, raw_text[:2000])
-            raise AIServiceError(f"فشل توليد أسئلة الوظيفة: {exc}") from exc
-
     def analyze_candidate(self, candidate_text: str):
         """يولّد تحليلاً شاملاً للمرشح (مستوى وظيفي، نقاط قوة، فجوات، وظائف مناسبة). يرفع AIServiceError عند الفشل."""
         from ai.prompts import CV_ANALYSIS_PROMPT_TEMPLATE
@@ -297,8 +280,13 @@ class GeminiService(AIProvider):
             logger.error("Gemini job analysis failed: %s | raw_response=%s", exc, raw_text[:2000])
             raise AIServiceError(f"فشل تحليل وصف الوظيفة: {exc}") from exc
 
-    def evaluate_interview_answer(self, job_text: str, question: str, answer: str):
-        """يقيّم إجابة مرشح على سؤال مقابلة واحد. يرفع AIServiceError عند الفشل."""
+    def evaluate_interview_answer(
+        self, job_text: str, question: str, answer: str, prior_qa: list[tuple[str, str]] | None = None
+    ):
+        """
+        يقيّم إجابة مرشح على سؤال مقابلة واحد. prior_qa (أسئلة/إجابات المقابلة الأخرى) تُرسل
+        كسياق مرجعي فقط ليلتقط النموذج معلومة ذُكرت في سؤال آخر. يرفع AIServiceError عند الفشل.
+        """
         from ai.prompts import ANSWER_EVALUATION_PROMPT_TEMPLATE
         from ai.schemas import AnswerEvaluation
 
@@ -306,7 +294,10 @@ class GeminiService(AIProvider):
         try:
             client = self._client()
             prompt = ANSWER_EVALUATION_PROMPT_TEMPLATE.format(
-                job_text=job_text[:3000], question=question[:1000], answer=answer[:4000]
+                job_text=job_text[:3000],
+                question=question[:1000],
+                answer=answer[:4000],
+                prior_context=_format_prior_context(prior_qa),
             )
             response = client.models.generate_content(
                 model=self._settings.ai_model,
