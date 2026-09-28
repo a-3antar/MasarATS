@@ -70,3 +70,8 @@ MIN_CANDIDATES_PER_JOB: int = 3       # أقل من هذا العدد = وظيف
 # المطابقة الهجينة (Hybrid): وزن التشابه الدلالي الافتراضي عندما لا تحدد الوظيفة وزناً خاصاً بها
 SEMANTIC_DEFAULT_WEIGHT: float = 0.2
 EMBEDDING_MODEL_NAME: str = "gemini-embedding-001"
+
+INTERVIEW_STATUSES: list[str] = ["Scheduled", "In Progress", "Completed", "Cancelled"]
+INTERVIEW_DECISIONS: list[str] = ["Continue", "Additional", "Hold", "Not Selected"]
+QUESTION_TYPES: list[str] = ["text", "choice", "rating"]
+QUESTION_DIFFICULTIES: list[str] = ["Low", "Medium", "High"]

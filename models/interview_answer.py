@@ -1,4 +1,6 @@
-"""نموذج إجابة مرشح على سؤال من بنك أسئلة الوظيفة، ضمن مقابلة محددة (= مرتبطة بمرشح عبر التقديم)."""
+"""إجابة مرشح على سؤال من بنك أسئلة الوظيفة ضمن مقابلة محددة.
+تقييم الذكاء الاصطناعي وتقييم المُقابِل مخزَّنان منفصلين؛ eval_score هي الدرجة الفعلية
+(درجة المُقابِل إن وُجدت وإلا درجة الذكاء الاصطناعي)."""
 
 from datetime import datetime, timezone
 
@@ -13,8 +15,6 @@ def _utcnow() -> datetime:
 
 
 class InterviewAnswer(Base):
-    """إجابة واحدة على سؤال واحد ضمن مقابلة واحدة، مع تقييمها."""
-
     __tablename__ = "interview_answers"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -22,11 +22,22 @@ class InterviewAnswer(Base):
     question_id: Mapped[int] = mapped_column(ForeignKey("job_questions.id"), nullable=False, index=True)
 
     answer: Mapped[str | None] = mapped_column(Text, nullable=True)
-    eval_score: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1 إلى 5
-    eval_method: Mapped[str | None] = mapped_column(String(10), nullable=True)  # "ai" أو "manual"
+
+    # تحليل الذكاء الاصطناعي (1 إلى 5 + أبعاد من 100 + سؤال متابعة مقترح)
+    ai_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ai_dimensions: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    ai_followup: Mapped[str | None] = mapped_column(Text, nullable=True)
     eval_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
     eval_strengths: Mapped[list] = mapped_column(JSON, default=list, nullable=True)
     eval_concerns: Mapped[list] = mapped_column(JSON, default=list, nullable=True)
+
+    # تقييم المُقابِل (1 إلى 5) وملاحظاته
+    manual_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    interviewer_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # الدرجة الفعلية (1 إلى 5) ومصدرها "ai" أو "manual"
+    eval_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    eval_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 

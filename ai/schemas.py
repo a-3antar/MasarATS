@@ -182,12 +182,17 @@ class JobRequirements(BaseModel):
         return _coerce_to_str_list(value)
 
 class AnswerEvaluation(BaseModel):
-    """تقييم إجابة مرشح على سؤال مقابلة واحد."""
+    """تقييم إجابة مرشح على سؤال مقابلة واحد: درجة 1-5، أبعاد من 100، نقاط قوة/تحقق، وسؤال متابعة."""
 
     score: int = Field(ge=1, le=5)
+    technical_knowledge: int | None = None
+    problem_solving: int | None = None
+    communication: int | None = None
+    practical_experience: int | None = None
     strengths: list[str] = Field(default_factory=list)
     concerns: list[str] = Field(default_factory=list)
     feedback: str | None = None
+    follow_up_question: str | None = None
 
     @field_validator("strengths", "concerns", mode="before")
     @classmethod
@@ -202,3 +207,17 @@ class AnswerEvaluation(BaseModel):
         except (TypeError, ValueError):
             return 3
         return min(max(score, 1), 5)
+
+    @field_validator(
+        "technical_knowledge", "problem_solving", "communication", "practical_experience",
+        mode="before",
+    )
+    @classmethod
+    def _clamp_dimension(cls, value: Any) -> Any:
+        """بُعد من 0 إلى 100؛ القيمة غير الصالحة تصبح None بدل رفض الاستجابة كلها."""
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return min(max(int(value), 0), 100)
+        except (TypeError, ValueError):
+            return None

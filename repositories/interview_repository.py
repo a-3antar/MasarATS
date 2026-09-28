@@ -22,6 +22,17 @@ class InterviewRepository(BaseRepository[Interview]):
         )
         return list(self._session.scalars(stmt).all())
 
+    def list_for_candidate(self, candidate_id: int) -> list[tuple[Interview, Job]]:
+        """كل مقابلات مرشح (عبر كل وظائفه) مع الوظيفة، الأحدث أولاً - لعرض سجل المقابلات السابقة."""
+        stmt = (
+            select(Interview, Job)
+            .join(Application, Application.id == Interview.application_id)
+            .join(Job, Job.id == Application.job_id)
+            .where(Application.candidate_id == candidate_id)
+            .order_by(Interview.scheduled_at.desc())
+        )
+        return [(row[0], row[1]) for row in self._session.execute(stmt).all()]
+
     def list_all_with_context(self) -> list[tuple[Interview, Candidate, Job]]:
         """كل المقابلات مع المرشح والوظيفة المرتبطين بها (لعرض التقويم الموحّد)."""
         stmt = (

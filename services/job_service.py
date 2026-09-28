@@ -26,6 +26,7 @@ class JobService:
     def __init__(self, session: Session) -> None:
         self._jobs = JobRepository(session)
         self._applications = ApplicationRepository(session)
+        self._session = session  # احفظ الجلسة للوصول إلى JobQuestion و InterviewAnswer
 
     @staticmethod
     def _validate_fields(fields: dict) -> None:
@@ -57,11 +58,6 @@ class JobService:
             setattr(job, name, value.strip() if name == "title" else value)
         return job
 
-    def delete_job(self, job_id: int) -> None:
-        """يحذف الوظيفة وكل التقديمات المرتبطة بها."""
-        job = self._get_or_raise(job_id)
-        self._applications.delete_for_job(job_id)
-        self._jobs.delete(job)
 
     def list_all(self) -> list[Job]:
         return self._jobs.list_all(limit=200)

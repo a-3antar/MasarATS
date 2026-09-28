@@ -19,6 +19,7 @@ class Interview(Base):
     __tablename__ = "interviews"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    code: Mapped[str | None] = mapped_column(String(20), index=True, nullable=True)  # INT-2026-0045
 
     application_id: Mapped[int] = mapped_column(ForeignKey("applications.id"), nullable=False, index=True)
 
@@ -29,16 +30,18 @@ class Interview(Base):
     interviewer: Mapped[str | None] = mapped_column(String(150), nullable=True)
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)  # مكان أو رابط اجتماع
 
-    questions: Mapped[str | None] = mapped_column(Text, nullable=True)
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    questions: Mapped[str | None] = mapped_column(Text, nullable=True)  # قديم - غير مستخدم في الواجهة الجديدة
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)  # ملاحظات المُقابِل (لا يستنتجها الذكاء الاصطناعي)
     feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
-    evaluation: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1 إلى 5
+    evaluation: Mapped[int | None] = mapped_column(Integer, nullable=True)
     next_action: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # التقييم النهائي للمقابلة (من 100): محسوب من تقييمات الإجابات، أو مُعدَّل يدوياً من المُقابِل
+    # التقييم النهائي (من 100): محسوب من الإجابات/الكفاءات، أو مُعدَّل يدوياً
     overall_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     overall_method: Mapped[str | None] = mapped_column(String(10), nullable=True)  # "auto" أو "manual"
     overall_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # قرار بشري فقط: Continue / Additional / Hold / Not Selected
+    decision: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 

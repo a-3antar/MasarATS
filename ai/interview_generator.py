@@ -54,3 +54,10 @@ def evaluate_interview_answer(
     from ai.gemini_service import GeminiService
 
     return GeminiService().evaluate_interview_answer(_job_context(job), question, answer, prior_qa or [])
+
+def generate_questions_for_job(job: Job) -> InterviewQuestions:
+    """يولّد أسئلة مقابلة عامة للوظيفة بدون مرشح محدد (لبنك الأسئلة). يرفع AIServiceError عند الفشل."""
+    from ai.gemini_service import GeminiService
+
+    no_candidate = "لا يوجد مرشح محدد: ولّد أسئلة عامة للوظيفة، واترك cv_specific فارغة."
+    return GeminiService().generate_interview_questions(_job_context(job), no_candidate)
