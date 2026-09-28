@@ -164,7 +164,7 @@ def render() -> None:
                 else "لا يوجد مرشحون بعد. ابدأ برفع سيرة ذاتية من صفحة «رفع سيرة ذاتية».")
         return
 
-    csv_col, xlsx_col, _ = st.columns([1, 1, 4])
+    csv_col, xlsx_col, organized_col, _ = st.columns([1, 1, 1, 3])
     with csv_col:
         st.download_button(
             "⬇️ CSV", ExportService.to_csv_bytes(export_df),
@@ -174,6 +174,13 @@ def render() -> None:
         st.download_button(
             "⬇️ Excel", ExportService.to_excel_bytes(export_df, "Candidates"),
             file_name="candidates.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+        )
+    with organized_col:
+        st.download_button(
+            "⬇️ ملف منظّم", ExportService.candidates_to_organized_workbook_bytes(candidates),
+            file_name="candidates_organized.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width="stretch",
         )
