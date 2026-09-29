@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Float, String, Text
+from sqlalchemy import JSON, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.constants import DEFAULT_MATCH_WEIGHTS, JOB_STATUSES
@@ -24,6 +24,15 @@ class Job(Base):
     department: Mapped[str | None] = mapped_column(String(100), nullable=True)
     location: Mapped[str | None] = mapped_column(String(150), nullable=True)
 
+    # بيانات وصفية للوظيفة - كلها nullable لأنها أُضيفت لاحقاً (الوظائف القديمة تحمل NULL)
+    employment_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    career_level: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    reports_to: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    education: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    salary_min: Mapped[float | None] = mapped_column(Float, nullable=True)
+    salary_max: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vacancies: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     required_experience_years: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # required_skills = "مهارات أخرى" لا تنتمي لفئة محددة (نفس منطق Candidate.skills)
@@ -43,10 +52,12 @@ class Job(Base):
     match_weights: Mapped[dict] = mapped_column(JSON, default=lambda: dict(DEFAULT_MATCH_WEIGHTS))
     embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
     embedding_meta: Mapped[dict] = mapped_column(JSON, default=dict, nullable=True)
-        # أوزان الكفاءات لتقييم المقابلات: {"Leadership": 20, "Planning": 10}
+    # أوزان الكفاءات لتقييم المقابلات: {"Leadership": 20, "Planning": 10}
     competency_weights: Mapped[dict] = mapped_column(JSON, default=dict, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    # يُحدَّث صراحةً من JobService عند تعديل المستخدم (وليس onupdate) حتى لا يتغيّر عند حفظ الـ embedding
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     @property
     def all_required_skills(self) -> list[str]:

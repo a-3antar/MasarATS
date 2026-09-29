@@ -335,7 +335,14 @@ class ExportService:
                 "Title": j.title,
                 "Department": j.department,
                 "Location": j.location,
+                "Employment Type": j.employment_type,
+                "Career Level": j.career_level,
+                "Reports To": j.reports_to,
+                "Education": j.education,
                 "Required Experience (Years)": j.required_experience_years,
+                "Salary Min": j.salary_min,
+                "Salary Max": j.salary_max,
+                "Vacancies": j.vacancies,
                 "Status": j.status,
                 "Technical Skills": _join(j.required_technical_skills),
                 "Computer Skills": _join(j.required_computer_skills),
@@ -345,6 +352,7 @@ class ExportService:
                 "Preferred Industries": _join(j.preferred_industries),
                 "Description": j.description,
                 "Created At": _date_text(j.created_at),
+                "Updated At": _date_text(j.updated_at),
             }
             for j in jobs
         ]

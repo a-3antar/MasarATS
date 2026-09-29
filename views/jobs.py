@@ -1,19 +1,24 @@
-"""صفحة إدارة الوظائف: إضافة / عرض / تعديل / حذف - بنفس فئات مهارات المرشحين، مع توليد تلقائي بالذكاء الاصطناعي.
-لوحة التعديل مقسّمة لتبويبين: ✏️ تعديل بيانات الوظيفة، و🗂️ بنك أسئلة المقابلة الخاص بها."""
+"""صفحة الوظائف: مؤشرات، بحث وفلاتر، جدول/بطاقات، لوحة تفاصيل، تحليل توظيف وقمع لكل وظيفة.
+الإضافة والتعديل داخل نوافذ (dialog) تحمل نموذج الوظيفة وتوليد الذكاء الاصطناعي وبنك الأسئلة."""
 
 import re
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import streamlit as st
 
-from core.constants import JOB_STATUSES
+from core.constants import (
+    CAREER_LEVELS, DEFAULT_SALARY_CURRENCY, DEFAULT_VACANCIES, EMPLOYMENT_TYPES,
+    JOB_STATUSES, MIN_CANDIDATES_PER_JOB,
+)
 from core.exceptions import AIServiceError, SmartATSError
 from database.database import get_db_session
 from models.job import Job
-from services.job_service import JobService
 from services.export_service import ExportService
+from services.job_insights_service import JobInsightsService, JobStats
+from services.job_service import JobService
 from services.question_bank_service import QuestionBankService
-
+from ui import job_components as ui
 
 # نفس فئات مهارات المرشح حتى تكون المطابقة متناسقة
 _LIST_FIELDS: list[tuple[str, str]] = [
@@ -26,6 +31,28 @@ _LIST_FIELDS: list[tuple[str, str]] = [
 ]
 _DEFAULT_STATUS_INDEX = 1  # "Open"
 
+_STATUS_LABELS = {"Draft": "مسودة", "Open": "مفتوحة", "On Hold": "معلّقة", "Closed": "مغلقة"}
+_STATUS_ICONS = {"Draft": "⚪", "Open": "🟢", "On Hold": "🟡", "Closed": "🔴"}
+_EMPLOYMENT_LABELS = {
+    "Full-time": "دوام كامل", "Part-time": "دوام جزئي", "Contract": "عقد",
+    "Internship": "تدريب", "Temporary": "مؤقت",
+}
+_LEVEL_LABELS = {
+    "Intern": "متدرب", "Junior": "مبتدئ", "Mid-Level": "متوسط", "Senior": "خبير",
+    "Manager": "مدير", "Director": "مدير إدارة", "Executive": "تنفيذي",
+}
+_DATE_FILTERS = {"كل الأوقات": None, "آخر 7 أيام": 7, "آخر 30 يوماً": 30, "آخر 90 يوماً": 90}
+_NONE_LABEL = "— غير محدد —"
+
+_CACHE_TTL = 30
+_CARD_COLUMNS = 3
+_SELECTED_KEY = "jobs_selected_id"
+_VIEW_LIST, _VIEW_CARDS = "📋 قائمة", "🗂️ بطاقات"
+_NAV_KEY, _MATCHING_PAGE, _MATCHING_JOB_KEY = "nav_page", "🎯 المطابقة", "m_job_select"
+_AI_DRAFT_KEYS = {"title", "dept", "loc", "desc", "exp"} | {attr for _, attr in _LIST_FIELDS}
+
+
+# ------------------------------------------------------------ أدوات عامة
 
 def _invalidate_job_related_caches() -> None:
     """
@@ -33,6 +60,9 @@ def _invalidate_job_related_caches() -> None:
     "الوظائف المناسبة" مخزّنة في بطاقة المرشح. يجب مسحها كلها عند أي تغيير في الوظائف
     حتى لا تظهر بيانات قديمة بعد الحفظ مباشرة.
     """
+    _page_data.clear()
+    _cached_insight.clear()
+    _export_bytes.clear()
     try:
         from views import matching as _matching
         _matching._cached_jobs.clear()
@@ -55,8 +85,68 @@ def _split_items(raw: str) -> list[str]:
     return [part.strip() for part in re.split(r"[,،\n]", raw or "") if part.strip()]
 
 
-def _join(items: list[str] | None) -> str:
-    return ", ".join(items) if items else "-"
+def _experience_text(years: float | None) -> str:
+    return f"{years:g}+ سنة" if years else "-"
+
+
+def _salary_text(low: float | None, high: float | None) -> str:
+    if low and high:
+        return f"{low:,.0f} – {high:,.0f} {DEFAULT_SALARY_CURRENCY}"
+    if low or high:
+        return f"{(low or high):,.0f} {DEFAULT_SALARY_CURRENCY}"
+    return "-"
+
+
+def _status_label(status: str) -> str:
+    return _STATUS_LABELS.get(status, status)
+
+
+# ------------------------------------------------------------ تحميل البيانات (مخزّنة مؤقتاً)
+
+def _job_to_row(job: Job) -> dict:
+    """نسخة بسيطة من الوظيفة (dict) قابلة للتخزين في كاش Streamlit."""
+    return {
+        "id": job.id, "title": job.title, "department": job.department, "location": job.location,
+        "employment_type": job.employment_type, "career_level": job.career_level,
+        "reports_to": job.reports_to, "education": job.education,
+        "salary_min": job.salary_min, "salary_max": job.salary_max,
+        "vacancies": job.vacancies or DEFAULT_VACANCIES,
+        "experience": job.required_experience_years, "status": job.status,
+        "skills": job.all_required_skills, "created_at": job.created_at,
+        "updated_at": job.updated_at or job.created_at,
+    }
+
+
+@st.cache_data(ttl=_CACHE_TTL, show_spinner=False)
+def _page_data() -> dict:
+    with get_db_session() as session:
+        insights = JobInsightsService(session)
+        jobs = sorted(JobService(session).list_all(), key=lambda j: j.updated_at or j.created_at, reverse=True)
+        return {
+            "jobs": [_job_to_row(j) for j in jobs],
+            "stats": insights.stats_by_job(),
+            "kpis": insights.kpis(),
+        }
+
+
+@st.cache_data(ttl=_CACHE_TTL, show_spinner=False)
+def _cached_insight(job_id: int):
+    with get_db_session() as session:
+        return JobInsightsService(session).job_insight(job_id)
+
+
+@st.cache_data(ttl=_CACHE_TTL, show_spinner=False)
+def _export_bytes(job_ids: tuple[int, ...]) -> tuple[bytes, bytes]:
+    with get_db_session() as session:
+        wanted = set(job_ids)
+        df = ExportService.jobs_to_dataframe([j for j in JobService(session).list_all() if j.id in wanted])
+    return ExportService.to_csv_bytes(df), ExportService.to_excel_bytes(df, "Jobs")
+
+
+# ------------------------------------------------------------ نموذج الوظيفة (إضافة / تعديل)
+
+def _select_index(options: list[str], value: str | None) -> str:
+    return value if value in options else ""
 
 
 def _form_values_from(job: Job | None, draft: dict | None = None) -> dict:
@@ -76,6 +166,13 @@ def _form_values_from(job: Job | None, draft: dict | None = None) -> dict:
         "desc": pick("description", job.description if job else None),
         "exp": float(pick("required_experience_years", job.required_experience_years if job else None, 0.0)),
         "status": job.status if job and job.status in JOB_STATUSES else JOB_STATUSES[_DEFAULT_STATUS_INDEX],
+        "type": _select_index(EMPLOYMENT_TYPES, job.employment_type if job else None),
+        "level": _select_index(CAREER_LEVELS, job.career_level if job else None),
+        "reports": (job.reports_to if job else None) or "",
+        "edu": (job.education if job else None) or "",
+        "smin": float((job.salary_min if job else None) or 0.0),
+        "smax": float((job.salary_max if job else None) or 0.0),
+        "vac": int((job.vacancies if job else None) or DEFAULT_VACANCIES),
     }
     for _, attr in _LIST_FIELDS:
         items = draft.get(attr) or (getattr(job, attr, None) if job else None) or []
@@ -90,11 +187,11 @@ def _apply_values_to_state(key: str, values: dict, only_non_empty: bool = False)
             continue
         st.session_state[f"{key}_{suffix}"] = value
 
+
 def _seed_form_state(key: str, job: Job | None) -> None:
     """
-    يهيّئ حقول النموذج من بيانات الوظيفة عند غياب مفتاح الحقل فقط.
-    (Streamlit يمسح قيمة أي حقل لم يُرسم في تشغيل ما، فنعيد التهيئة تلقائياً بدل الاعتماد على علامة seeded.)
-    ثم يطبّق مسودة الذكاء الاصطناعي المعلّقة (إن وُجدت) قبل رسم الحقول مباشرة.
+    يهيّئ حقول النموذج من بيانات الوظيفة عند غياب مفتاح الحقل فقط، ثم يطبّق مسودة الذكاء
+    الاصطناعي المعلّقة (إن وُجدت) قبل رسم الحقول مباشرة (الوقت الوحيد الآمن لتعديل قيمها).
     """
     for suffix, value in _form_values_from(job).items():
         st.session_state.setdefault(f"{key}_{suffix}", value)
@@ -105,11 +202,7 @@ def _seed_form_state(key: str, job: Job | None) -> None:
 
 
 def _render_ai_job_generator(key: str) -> None:
-    """
-    زر توليد بيانات الوظيفة تلقائياً من وصف حر عبر الذكاء الاصطناعي.
-    النتيجة تُحفظ كمسودة معلّقة، وتُطبَّق على الحقول في التشغيل التالي (داخل _seed_form_state)
-    قبل إنشاء الـ widgets، وهذا هو الوقت الوحيد الآمن لتعديل قيمها.
-    """
+    """توليد بيانات الوظيفة من وصف حر. يعمل داخل dialog، فنعيد تشغيل الـ fragment فقط ليبقى مفتوحاً."""
     with st.expander("🤖 توليد بيانات الوظيفة تلقائياً من وصف حر"):
         raw_description = st.text_area(
             "الصق وصف الوظيفة هنا (نص غير منظم)",
@@ -126,31 +219,41 @@ def _render_ai_job_generator(key: str) -> None:
 
                 with st.spinner("جاري تحليل الوصف..."):
                     result = analyze_job_description(raw_description.strip())
-                st.session_state[f"{key}_pending_draft"] = _form_values_from(None, result.model_dump())
+                draft = _form_values_from(None, result.model_dump())
+                st.session_state[f"{key}_pending_draft"] = {k: v for k, v in draft.items() if k in _AI_DRAFT_KEYS}
                 st.toast("تم التوليد — راجع الحقول وعدّلها قبل الحفظ")
-                st.rerun()
+                st.rerun(scope="fragment")
             except AIServiceError as exc:
                 st.error(str(exc))
 
 
 def _job_form_fields(key: str) -> dict:
-    """
-    يرسم حقول نموذج الوظيفة (للإضافة أو التعديل) ويرجع القيم المُدخلة.
-    القيم المبدئية تأتي من session_state (تُهيَّأ عبر _seed_form_state)، لذلك لا نمرّر value= هنا.
-    """
+    """يرسم حقول نموذج الوظيفة ويرجع القيم المُدخلة (القيم المبدئية من session_state عبر _seed_form_state)."""
     title = st.text_input("مسمى الوظيفة *", key=f"{key}_title")
-    department = st.text_input("القسم", key=f"{key}_dept")
-    location = st.text_input("الموقع", key=f"{key}_loc")
-    experience = st.number_input("سنوات الخبرة المطلوبة", min_value=0.0, step=0.5, key=f"{key}_exp")
-    status = st.selectbox("حالة الوظيفة", JOB_STATUSES, key=f"{key}_status")
+    col1, col2 = st.columns(2)
+    with col1:
+        department = st.text_input("القسم", key=f"{key}_dept")
+        employment = st.selectbox(
+            "نوع التوظيف", [""] + EMPLOYMENT_TYPES, key=f"{key}_type",
+            format_func=lambda v: _EMPLOYMENT_LABELS.get(v, _NONE_LABEL),
+        )
+        reports_to = st.text_input("يتبع لـ (Reports To)", key=f"{key}_reports")
+        salary_min = st.number_input("الراتب الأدنى", min_value=0.0, step=500.0, key=f"{key}_smin")
+        experience = st.number_input("سنوات الخبرة المطلوبة", min_value=0.0, step=0.5, key=f"{key}_exp")
+    with col2:
+        location = st.text_input("الموقع", key=f"{key}_loc")
+        level = st.selectbox(
+            "المستوى الوظيفي", [""] + CAREER_LEVELS, key=f"{key}_level",
+            format_func=lambda v: _LEVEL_LABELS.get(v, _NONE_LABEL),
+        )
+        education = st.text_input("المؤهل الدراسي", key=f"{key}_edu")
+        salary_max = st.number_input("الراتب الأعلى", min_value=0.0, step=500.0, key=f"{key}_smax")
+        vacancies = st.number_input("عدد الشواغر", min_value=1, step=1, key=f"{key}_vac")
+    status = st.selectbox("حالة الوظيفة", JOB_STATUSES, key=f"{key}_status", format_func=_status_label)
 
     raw_lists: dict[str, str] = {}
     for label, attr in _LIST_FIELDS:
-        raw_lists[attr] = st.text_area(
-            f"{label} (مفصولة بفاصلة)",
-            key=f"{key}_{attr}",
-            height=80,
-        )
+        raw_lists[attr] = st.text_area(f"{label} (مفصولة بفاصلة)", key=f"{key}_{attr}", height=80)
 
     description = st.text_area("وصف الوظيفة", key=f"{key}_desc")
 
@@ -158,6 +261,13 @@ def _job_form_fields(key: str) -> dict:
         "title": title,
         "department": department.strip() or None,
         "location": location.strip() or None,
+        "employment_type": employment or None,
+        "career_level": level or None,
+        "reports_to": reports_to.strip() or None,
+        "education": education.strip() or None,
+        "salary_min": salary_min or None,
+        "salary_max": salary_max or None,
+        "vacancies": int(vacancies),
         "required_experience_years": experience or None,
         "status": status,
         "description": description.strip() or None,
@@ -165,29 +275,26 @@ def _job_form_fields(key: str) -> dict:
     }
 
 
-def _render_add_form() -> None:
-    with st.expander("➕ إضافة وظيفة جديدة", expanded=False):
-        _seed_form_state("new", None)
-        _render_ai_job_generator("new")
-        with st.form("new_job_form"):
-            values = _job_form_fields("new")
-            submitted = st.form_submit_button("حفظ الوظيفة", type="primary")
+@st.dialog("➕ إضافة وظيفة جديدة", width="large")
+def _create_dialog() -> None:
+    _seed_form_state("new", None)
+    _render_ai_job_generator("new")
+    with st.form("new_job_form"):
+        values = _job_form_fields("new")
+        submitted = st.form_submit_button("حفظ الوظيفة", type="primary")
 
-        if submitted:
-            try:
-                with get_db_session() as session:
-                    JobService(session).create_job(**values)
-                # مسح حالة النموذج ليُهيَّأ فارغاً في الرسم التالي
-                for state_key in [k for k in st.session_state if str(k).startswith("new_")]:
-                    del st.session_state[state_key]
-                _invalidate_job_related_caches()
-                st.toast("تمت إضافة الوظيفة ✅")
-                st.rerun()
-            except SmartATSError as exc:
-                st.error(str(exc))
+    if submitted:
+        try:
+            with get_db_session() as session:
+                JobService(session).create_job(**values)
+            for state_key in [k for k in st.session_state if str(k).startswith("new_")]:
+                del st.session_state[state_key]
+            _invalidate_job_related_caches()
+            st.toast("تمت إضافة الوظيفة ✅")
+            st.rerun()
+        except SmartATSError as exc:
+            st.error(str(exc))
 
-
-# ------------------------------------------------------------ تبويب: تعديل بيانات الوظيفة
 
 def _render_job_details_tab(job_id: int, job: Job) -> None:
     edit_key = f"edit_{job_id}"
@@ -201,7 +308,6 @@ def _render_job_details_tab(job_id: int, job: Job) -> None:
         try:
             with get_db_session() as session:
                 JobService(session).update_job(job_id, **values)
-            # نمسح التهيئة ليُعاد تحميل القيم المحفوظة من القاعدة في الرسم التالي
             for state_key in [k for k in st.session_state if str(k).startswith(f"{edit_key}_")]:
                 del st.session_state[state_key]
             _invalidate_job_related_caches()
@@ -218,14 +324,13 @@ def _render_job_details_tab(job_id: int, job: Job) -> None:
         try:
             with get_db_session() as session:
                 JobService(session).delete_job(job_id)
+            st.session_state.pop(_SELECTED_KEY, None)
             _invalidate_job_related_caches()
             st.toast("تم حذف الوظيفة 🗑️")
             st.rerun()
         except SmartATSError as exc:
             st.error(str(exc))
 
-
-# ------------------------------------------------------------ تبويب: بنك أسئلة المقابلة
 
 def _render_job_questions_tab(job_id: int, job: Job) -> None:
     st.caption(
@@ -236,8 +341,9 @@ def _render_job_questions_tab(job_id: int, job: Job) -> None:
     with get_db_session() as session:
         current_text = QuestionBankService(session).as_text(job_id)
 
+    text_key = f"job_q_bulk_{job_id}"
     edited_text = st.text_area(
-        "أسئلة الوظيفة", value=current_text, height=220, key=f"job_q_bulk_{job_id}",
+        "أسئلة الوظيفة", value=current_text, height=220, key=text_key,
         placeholder="اكتب سؤالاً في كل سطر...",
     )
 
@@ -255,7 +361,8 @@ def _render_job_questions_tab(job_id: int, job: Job) -> None:
                 if summary["removed"]:
                     parts.append(f"حذف {summary['removed']}")
                 st.toast("تم الحفظ ✅ " + (" · ".join(parts) if parts else ""))
-                st.rerun()
+                st.session_state.pop(text_key, None)
+                st.rerun(scope="fragment")
             except SmartATSError as exc:
                 st.error(str(exc))
     with col_regen:
@@ -270,7 +377,8 @@ def _render_job_questions_tab(job_id: int, job: Job) -> None:
                 with get_db_session() as session:
                     added = QuestionBankService(session).add_ai_questions(job_id, result)
                 st.toast(f"تمت إضافة {len(added)} سؤال جديد بالذكاء الاصطناعي ✅")
-                st.rerun()
+                st.session_state.pop(text_key, None)  # ليُعاد تحميل النص بالأسئلة الجديدة
+                st.rerun(scope="fragment")
             except SmartATSError as exc:
                 st.error(str(exc))
 
@@ -280,79 +388,301 @@ def _render_job_questions_tab(job_id: int, job: Job) -> None:
     )
 
 
-def _render_edit_panel(job_id: int) -> None:
+@st.dialog("✏️ تعديل الوظيفة", width="large")
+def _edit_dialog(job_id: int) -> None:
     with get_db_session() as session:
         job = JobService(session).get_by_id(job_id)
     if job is None:
         st.warning("الوظيفة غير موجودة.")
         return
-
-    st.subheader(f"✏️ تعديل: {job.title}")
-
-    tab_details, tab_questions = st.tabs(["✏️ تعديل بيانات الوظيفة", "🗂️ بنك أسئلة المقابلة"])
+    st.subheader(job.title)
+    tab_details, tab_questions = st.tabs(["✏️ بيانات الوظيفة", "🗂️ بنك أسئلة المقابلة"])
     with tab_details:
         _render_job_details_tab(job_id, job)
     with tab_questions:
         _render_job_questions_tab(job_id, job)
 
 
-def _to_row(j: Job) -> dict:
+# ------------------------------------------------------------ إجراءات سريعة
+
+def _select_job(job_id: int) -> None:
+    st.session_state[_SELECTED_KEY] = job_id
+
+
+def _go_to_matching(job_id: int, title: str) -> None:
+    """callback: ينقل المستخدم لصفحة المطابقة مع اختيار هذه الوظيفة."""
+    st.session_state[_NAV_KEY] = _MATCHING_PAGE
+    st.session_state[_MATCHING_JOB_KEY] = f"{title} (#{job_id})"
+
+
+def _quick_action(action, success: str) -> None:
+    try:
+        with get_db_session() as session:
+            action(JobService(session))
+    except SmartATSError as exc:
+        st.error(str(exc))
+        return
+    _invalidate_job_related_caches()
+    st.toast(success)
+    st.rerun()
+
+
+# ------------------------------------------------------------ المؤشرات والفلاتر
+
+def _render_kpis(k: dict) -> None:
+    month = lambda n: (f"▲ +{n} وظيفة أُنشئت هذا الشهر", "up") if n else ("لا وظائف جديدة هذا الشهر", "muted")  # noqa: E731
+    open_sub, open_tone = month(k["open_new_month"])
+    draft_sub, draft_tone = month(k["draft_new_month"])
+    cards = [
+        ("💼", "وظائف مفتوحة", k["open_jobs"], open_sub, open_tone, k["open_trend"]),
+        ("📝", "وظائف مسودة", k["draft_jobs"], draft_sub, draft_tone, k["draft_trend"]),
+        ("👥", "مرشحون مطلوبون", k["candidates_needed"], "إجمالي شواغر الوظائف المفتوحة", "muted", None),
+        ("⚠️", "وظائف تحتاج مرشحين", k["jobs_needing_candidates"],
+         f"أقل من {MIN_CANDIDATES_PER_JOB} مرشحين مطابَقين", "down", None),
+    ]
+    for col, (icon, label, value, sub, tone, trend) in zip(st.columns(len(cards)), cards):
+        col.markdown(ui.kpi_card(icon, label, value, sub, tone, trend), unsafe_allow_html=True)
+
+
+def _unique_options(rows: list[dict], key: str) -> list[str]:
+    return sorted({r[key] for r in rows if r[key]})
+
+
+def _render_filter_bar(rows: list[dict]) -> dict:
+    cols = st.columns(6)
+    with cols[0]:
+        status = st.multiselect("الحالة", JOB_STATUSES, key="jf_status", format_func=_status_label)
+    with cols[1]:
+        department = st.multiselect("القسم", _unique_options(rows, "department"), key="jf_dept")
+    with cols[2]:
+        location = st.multiselect("الموقع", _unique_options(rows, "location"), key="jf_loc")
+    with cols[3]:
+        employment = st.multiselect(
+            "نوع التوظيف", EMPLOYMENT_TYPES, key="jf_type", format_func=_EMPLOYMENT_LABELS.get
+        )
+    with cols[4]:
+        level = st.multiselect("المستوى", CAREER_LEVELS, key="jf_level", format_func=_LEVEL_LABELS.get)
+    with cols[5]:
+        created = st.selectbox("تاريخ الإنشاء", list(_DATE_FILTERS), key="jf_date")
     return {
-        "المسمى": j.title,
-        "القسم": j.department or "-",
-        "الموقع": j.location or "-",
-        "الخبرة المطلوبة": f"{j.required_experience_years:g}" if j.required_experience_years else "-",
-        "المهارات الفنية": _join(j.required_technical_skills),
-        "مهارات الكمبيوتر": _join(j.required_computer_skills),
-        "المهارات الإدارية": _join(j.required_managerial_skills),
-        "المهارات الشخصية": _join(j.required_soft_skills),
-        "مهارات أخرى": _join(j.required_skills),
-        "المجالات المفضلة": _join(j.preferred_industries),
-        "الحالة": j.status,
+        "status": status, "department": department, "location": location,
+        "employment_type": employment, "career_level": level, "days": _DATE_FILTERS[created],
     }
 
+
+def _apply_filters(rows: list[dict], query: str, f: dict) -> list[dict]:
+    needle = query.strip().lower()
+    since = (
+        datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=f["days"]) if f["days"] else None
+    )
+    result = []
+    for r in rows:
+        haystack = " ".join([r["title"], r["department"] or "", r["location"] or "", *r["skills"]]).lower()
+        if needle and needle not in haystack:
+            continue
+        if any(f[k] and r[k] not in f[k] for k in ("status", "department", "location", "employment_type", "career_level")):
+            continue
+        if since and r["created_at"].replace(tzinfo=None) < since:
+            continue
+        result.append(r)
+    return result
+
+
+# ------------------------------------------------------------ الجدول والبطاقات
+
+def _render_table(rows: list[dict], stats: dict[int, JobStats]) -> None:
+    data = []
+    for r in rows:
+        s = stats.get(r["id"], JobStats())
+        data.append({
+            "المسمى": r["title"],
+            "القسم": r["department"] or "-",
+            "الموقع": r["location"] or "-",
+            "النوع": _EMPLOYMENT_LABELS.get(r["employment_type"], "-"),
+            "الخبرة": _experience_text(r["experience"]),
+            "المرشحون": s.applicants,
+            "المؤهلون": s.qualified,
+            "نسبة التأهل": round(s.qualified / s.applicants * 100) if s.applicants else 0,
+            "الحالة": f"{_STATUS_ICONS.get(r['status'], '')} {_status_label(r['status'])}",
+            "آخر تحديث": ui.relative_time(r["updated_at"]),
+        })
+    event = st.dataframe(
+        pd.DataFrame(data), width="stretch", hide_index=True,
+        on_select="rerun", selection_mode="single-row", key="jobs_table",
+        column_config={
+            "نسبة التأهل": st.column_config.ProgressColumn("نسبة التأهل", format="%d%%", min_value=0, max_value=100),
+        },
+    )
+    picked = event.selection.rows
+    if picked and picked[0] < len(rows):
+        st.session_state[_SELECTED_KEY] = rows[picked[0]]["id"]
+
+
+def _render_cards(rows: list[dict], stats: dict[int, JobStats]) -> None:
+    columns = st.columns(_CARD_COLUMNS)
+    selected_id = st.session_state.get(_SELECTED_KEY)
+    for index, r in enumerate(rows):
+        s = stats.get(r["id"], JobStats())
+        subtitle = " · ".join(p for p in (r["department"], r["location"]) if p) or "-"
+        with columns[index % _CARD_COLUMNS], st.container(border=True):
+            st.markdown(
+                ui.job_card_html(
+                    ("▶ " if r["id"] == selected_id else "") + r["title"], subtitle,
+                    ui.status_badge(r["status"], _status_label(r["status"])),
+                    _experience_text(r["experience"]), s.applicants, s.qualified,
+                ),
+                unsafe_allow_html=True,
+            )
+            st.button(
+                "عرض التفاصيل", key=f"card_select_{r['id']}", on_click=_select_job,
+                args=(r["id"],), width="stretch",
+            )
+
+
+def _resolve_selected(rows: list[dict]) -> dict:
+    """الوظيفة المختارة إن كانت ضمن النتائج الحالية، وإلا أول وظيفة."""
+    by_id = {r["id"]: r for r in rows}
+    return by_id.get(st.session_state.get(_SELECTED_KEY)) or rows[0]
+
+
+# ------------------------------------------------------------ تحليل التوظيف والقمع (أسفل الجدول)
+
+def _render_insight_section(job: dict) -> None:
+    insight = _cached_insight(job["id"])
+    s = insight.stats
+    col_ai, col_funnel = st.columns(2)
+
+    with col_ai, st.container(border=True):
+        st.markdown(f"**🧠 تحليل التوظيف** — {job['title']}")
+        st.caption("محسوب بقواعد ثابتة قابلة للتفسير (بدون استدعاء ذكاء اصطناعي).")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("محلَّلون", s.applicants)
+        m2.metric("مؤهلون", s.qualified)
+        m3.metric("قائمة مختصرة", s.shortlisted)
+        m4.metric("مقابلات", s.interviewed)
+
+        col_top, col_gap = st.columns(2)
+        with col_top:
+            st.markdown("**✅ أبرز المهارات المتطابقة**")
+            for skill in insight.top_skills:
+                st.write(f"✔️ {skill}")
+            if not insight.top_skills:
+                st.caption("لا توجد بيانات كافية.")
+        with col_gap:
+            st.markdown("**⚠️ فجوات محتملة**")
+            for skill in insight.gap_skills:
+                st.write(f"• {skill}")
+            if not insight.gap_skills:
+                st.caption("لا فجوات ظاهرة.")
+            st.caption("«غير موثّقة» في السير لا تعني «غير موجودة».")
+        st.button(
+            "عرض المرشحين المطابقين ←", key=f"insight_match_{job['id']}", type="primary", width="stretch",
+            on_click=_go_to_matching, args=(job["id"], job["title"]),
+        )
+
+    with col_funnel, st.container(border=True):
+        st.markdown("**🔻 قمع التوظيف**")
+        st.markdown(ui.funnel_html(s.funnel()), unsafe_allow_html=True)
+        st.markdown("**توزيع المطابقة**")
+        st.markdown(ui.distribution_html(s.high, s.medium, s.low), unsafe_allow_html=True)
+        st.markdown("**💡 ملاحظات سريعة**")
+        for note in insight.quick:
+            st.write(f"• {note}")
+
+
+# ------------------------------------------------------------ لوحة تفاصيل الوظيفة (يمين)
+
+def _render_detail_panel(job: dict, stats: dict[int, JobStats]) -> None:
+    s = stats.get(job["id"], JobStats())
+    with st.container(border=True):
+        st.markdown(
+            f'<div class="jb"><div class="jb-title">{job["title"]}</div>'
+            f'{ui.status_badge(job["status"], _status_label(job["status"]))}</div>',
+            unsafe_allow_html=True,
+        )
+        col_edit, col_copy, col_close = st.columns(3)
+        with col_edit:
+            if st.button("✏️ تعديل", key=f"edit_{job['id']}", type="primary", width="stretch"):
+                _edit_dialog(job["id"])
+        with col_copy:
+            if st.button("📄 نسخ", key=f"dup_{job['id']}", width="stretch"):
+                _quick_action(lambda svc: svc.duplicate_job(job["id"]), "تم إنشاء نسخة كمسودة ✅")
+        with col_close:
+            if st.button("🔒 إغلاق", key=f"close_{job['id']}", disabled=job["status"] == "Closed", width="stretch"):
+                _quick_action(lambda svc: svc.close_job(job["id"]), "تم إغلاق الوظيفة 🔒")
+
+        st.markdown('<div class="jb jb-section">📋 معلومات الوظيفة</div>', unsafe_allow_html=True)
+        st.markdown(ui.info_rows([
+            ("القسم", job["department"]), ("يتبع لـ", job["reports_to"]), ("الموقع", job["location"]),
+            ("نوع التوظيف", _EMPLOYMENT_LABELS.get(job["employment_type"], "-")),
+            ("الراتب", _salary_text(job["salary_min"], job["salary_max"])),
+            ("الشواغر", str(job["vacancies"])),
+        ]), unsafe_allow_html=True)
+
+        st.markdown('<div class="jb jb-section">🎓 المتطلبات</div>', unsafe_allow_html=True)
+        st.markdown(ui.info_rows([
+            ("الخبرة", _experience_text(job["experience"])), ("المؤهل", job["education"]),
+            ("المستوى", _LEVEL_LABELS.get(job["career_level"], "-")),
+        ]), unsafe_allow_html=True)
+
+        st.markdown('<div class="jb jb-section">🛠️ المهارات المطلوبة</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="jb">{ui.skill_chips(job["skills"])}</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="jb jb-section">🔻 قمع التوظيف</div>', unsafe_allow_html=True)
+        st.markdown(ui.funnel_html(s.funnel(), size=38), unsafe_allow_html=True)
+
+
+# ------------------------------------------------------------ الصفحة الرئيسية
+
 def render() -> None:
-    st.header("💼 الوظائف")
+    ui.inject_css()
 
-    _render_add_form()
+    col_title, col_create = st.columns([4, 1])
+    with col_title:
+        st.header("💼 الوظائف")
+        st.caption("إدارة الشواغر والمتطلبات ومسار المرشحين")
+    with col_create:
+        st.write("")
+        if st.button("➕ إنشاء وظيفة", type="primary", width="stretch", key="jobs_create_btn"):
+            _create_dialog()
 
-    query = st.text_input("بحث بالمسمى / القسم / الموقع", "", key="jobs_search")
+    data = _page_data()
+    _render_kpis(data["kpis"])
 
-    with get_db_session() as session:
-        jobs = JobService(session).search(query)
-        job_ids = [j.id for j in jobs]
-        rows = [_to_row(j) for j in jobs]
-        export_df = ExportService.jobs_to_dataframe(jobs)
-
-    if not rows:
-        st.info("لا توجد وظائف مطابقة." if query else "لا توجد وظائف بعد.")
+    if not data["jobs"]:
+        st.info("لا توجد وظائف بعد. اضغط «إنشاء وظيفة» للبدء.")
         return
 
-    csv_col, xlsx_col, _ = st.columns([1, 1, 4])
-    with csv_col:
-        st.download_button(
-            "⬇️ CSV", ExportService.to_csv_bytes(export_df),
-            file_name="jobs.csv", mime="text/csv", width="stretch",
-        )
-    with xlsx_col:
-        st.download_button(
-            "⬇️ Excel", ExportService.to_excel_bytes(export_df, "Jobs"),
-            file_name="jobs.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
-        )
-
-    event = st.dataframe(
-        pd.DataFrame(rows),
-        width="stretch",
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="jobs_table",
+    query = st.text_input(
+        "بحث", key="jobs_search", label_visibility="collapsed",
+        placeholder="🔎 ابحث بالمسمى أو القسم أو المهارة أو الموقع...",
     )
-    st.caption(f"إجمالي الوظائف: {len(rows)} — اضغط على أي صف لتعديل الوظيفة أو حذفها.")
+    filters = _render_filter_bar(data["jobs"])
+    rows = _apply_filters(data["jobs"], query, filters)
 
-    selected_rows = event.selection.rows
-    if selected_rows and selected_rows[0] < len(job_ids):
-        st.divider()
-        _render_edit_panel(job_ids[selected_rows[0]])
+    view = st.radio("طريقة العرض", [_VIEW_LIST, _VIEW_CARDS], horizontal=True, key="jobs_view")
+    if not rows:
+        st.info("لا توجد وظائف مطابقة للبحث والفلاتر الحالية.")
+        return
+
+    stats: dict[int, JobStats] = data["stats"]
+    main, side = st.columns([3, 1.15], gap="medium")
+    with main:
+        csv_bytes, xlsx_bytes = _export_bytes(tuple(r["id"] for r in rows))
+        csv_col, xlsx_col, _ = st.columns([1, 1, 4])
+        csv_col.download_button("⬇️ CSV", csv_bytes, file_name="jobs.csv", mime="text/csv", width="stretch")
+        xlsx_col.download_button(
+            "⬇️ Excel", xlsx_bytes, file_name="jobs.xlsx", width="stretch",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        if view == _VIEW_LIST:
+            _render_table(rows, stats)
+            st.caption(f"إجمالي الوظائف: {len(rows)} — اضغط على أي صف لعرض تفاصيله وتحليله.")
+        else:
+            _render_cards(rows, stats)
+
+        selected = _resolve_selected(rows)
+        _render_insight_section(selected)
+    with side:
+        _render_detail_panel(selected, stats)

@@ -75,3 +75,16 @@ INTERVIEW_STATUSES: list[str] = ["Scheduled", "In Progress", "Completed", "Cance
 INTERVIEW_DECISIONS: list[str] = ["Continue", "Additional", "Hold", "Not Selected"]
 QUESTION_TYPES: list[str] = ["text", "choice", "rating"]
 QUESTION_DIFFICULTIES: list[str] = ["Low", "Medium", "High"]
+
+# صفحة الوظائف
+EMPLOYMENT_TYPES: list[str] = ["Full-time", "Part-time", "Contract", "Internship", "Temporary"]
+CAREER_LEVELS: list[str] = ["Intern", "Junior", "Mid-Level", "Senior", "Manager", "Director", "Executive"]
+DEFAULT_SALARY_CURRENCY: str = "EGP"
+DEFAULT_VACANCIES: int = 1
+MATCH_HIGH_THRESHOLD: float = 80.0     # توزيع المطابقة: عالية
+MATCH_MEDIUM_THRESHOLD: float = 50.0   # توزيع المطابقة: متوسطة (أقل منها منخفضة)
+SKILL_STRONG_COVERAGE: float = 0.5     # مهارة يملكها نصف المرشحين فأكثر = نقطة قوة
+SKILL_GAP_COVERAGE: float = 0.25       # مهارة يوثّقها أقل من ربع المرشحين = فجوة محتملة
+JOB_TREND_WEEKS: int = 8               # أسابيع الرسم المصغّر في بطاقات المؤشرات
+JOB_NEW_DAYS: int = 30                 # "هذا الشهر"
+JOB_INSIGHT_MAX_SKILLS: int = 6
