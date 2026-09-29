@@ -1,5 +1,7 @@
-"""بطاقة المرشح الموحّدة: شكل ثابت واحد لعرض كل السير الذاتية + تبويب تعديل + اختيار لغة العرض."""
+"""بطاقة المرشح الموحّدة: ترويسة + أزرار سريعة + مؤشرات + تبويبات (نظرة عامة، خبرات، تفاصيل، وظائف، تعديل).
+render_drawer تُستخدم كلوحة جانبية في صفحة المرشحين، و render_profile للاستخدام داخل expander (رفع السير، المقابلات)."""
 
+import html
 import re
 
 import streamlit as st
@@ -10,10 +12,8 @@ from database.database import get_db_session
 from models.candidate import Candidate
 from services.candidate_service import CandidateService
 from services.job_service import JobService
-from services.matching_service import MatchingService
 from services import background_analysis
 
-# ترتيب الأقسام ثابت لكل المرشحين - هذا ما يوحّد شكل السير الذاتية
 _SKILL_SECTIONS: list[tuple[str, str]] = [
     ("🛠️ المهارات الفنية", "technical_skills"),
     ("💻 مهارات الكمبيوتر", "computer_skills"),
@@ -27,24 +27,57 @@ _BACKGROUND_SECTIONS: list[tuple[str, str]] = [
     ("🏢 الشركات السابقة", "previous_companies"),
 ]
 _LANGUAGES_SECTION: tuple[str, str] = ("🌐 اللغات", "languages")
-_PHOTO_WIDTH_PX = 180
-_MAX_RESPONSIBILITIES_SHOWN = 6
+_PHOTO_WIDTH_PX = 96
+_MAX_RESPONSIBILITIES_SHOWN = 8
 _LANG_OPTIONS = {"English": "en", "العربية": "ar"}
 _NOT_MENTIONED = "غير مذكور في السيرة الذاتية"
-
-_TOP_JOBS_COUNT = 5
 _MAX_SUITABLE_JOBS = 5
-
 _POLL_SECONDS = 3
-
-# مدة الكاش لنتيجة "الوظائف المناسبة" - هذا الحساب كان يُعاد تشغيله بالكامل
-# (مقابل كل وظيفة مفتوحة) في كل مرة يُفتح فيها تبويب المرشح، وهو أكبر سبب لبطء
-# التنقل بين المرشحين في صفحة "المرشحون".
 _SUITABLE_JOBS_CACHE_TTL = 60
+_NAV_KEY = "nav_page"                       # مفتاح radio التنقل في app.py
+_INTERVIEWS_PAGE_LABEL = "🗓️ المقابلات"
+
+_STATUS_COLORS = {
+    "New": "#64748b", "Screening": "#3b82f6", "Shortlisted": "#22c55e", "Interview": "#f59e0b",
+    "Offer": "#a855f7", "Hired": "#14b8a6", "Rejected": "#ef4444",
+}
+
+_CSS = """
+<style>
+.cp-badge{display:inline-block;padding:2px 12px;border-radius:999px;font-size:.78rem;font-weight:700;
+  color:var(--c);border:1px solid var(--c);background:color-mix(in srgb,var(--c) 14%,transparent)}
+.cp-chip{display:inline-block;padding:2px 10px;margin:0 4px 6px 0;border-radius:999px;font-size:.76rem;
+  border:1px solid rgba(59,130,246,.35);background:rgba(59,130,246,.10)}
+.cp-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:8px;margin:8px 0 4px}
+.cp-kpi{padding:9px 12px;border:1px solid rgba(128,128,128,.25);border-radius:10px;background:rgba(128,128,128,.06)}
+.cp-kpi-l{font-size:.7rem;opacity:.65}
+.cp-kpi-v{font-size:1.05rem;font-weight:700}
+.cp-title{font-size:.95rem;font-weight:700;margin:14px 0 6px}
+</style>
+"""
 
 
-def _tags(items: list[str]) -> str:
-    return "  ".join(f"`{item.replace('`', chr(39))}`" for item in items)
+def _inject_css() -> None:
+    st.markdown(_CSS, unsafe_allow_html=True)
+
+
+# ------------------------------------------------------------ أدوات صغيرة
+
+def _chips(items: list[str]) -> str:
+    return "".join(f'<span class="cp-chip">{html.escape(item)}</span>' for item in items)
+
+
+def _badge(text: str, color: str) -> str:
+    return f'<span class="cp-badge" style="--c:{color}">{html.escape(text)}</span>'
+
+
+def _kpi_html(items: list[tuple[str, str]]) -> str:
+    cells = "".join(
+        f'<div class="cp-kpi"><div class="cp-kpi-l">{html.escape(label)}</div>'
+        f'<div class="cp-kpi-v">{html.escape(value)}</div></div>'
+        for label, value in items
+    )
+    return f'<div class="cp-kpis">{cells}</div>'
 
 
 def _split_items(raw: str) -> list[str]:
@@ -76,13 +109,21 @@ def _value(candidate: Candidate, attr: str, lang: str):
     return value
 
 
+def clear_related_caches() -> None:
+    """تُستدعى بعد أي تعديل على مرشح/وظيفة حتى لا تُعرض بيانات قديمة من الكاش."""
+    clear_suitable_jobs_cache()
+    try:
+        from views import candidates as _candidates
+        _candidates.invalidate_cache()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @st.cache_data(ttl=_SUITABLE_JOBS_CACHE_TTL, show_spinner=False)
 def _cached_suitable_jobs(candidate_id: int, open_only: bool) -> list[dict]:
-    """
-    نتيجة مطابقة مرشح واحد ضد الوظائف - مخزّنة مؤقتاً حسب (candidate_id, open_only).
-    يُعاد الحساب تلقائياً بعد انتهاء المهلة، أو فوراً بعد أي تعديل على المرشح/الوظائف
-    عبر مسح الكاش (candidate_profile.clear_suitable_jobs_cache).
-    """
+    """نتيجة مطابقة مرشح واحد ضد الوظائف - مخزّنة مؤقتاً حسب (candidate_id, open_only)."""
+    from services.matching_service import MatchingService
+
     with get_db_session() as session:
         candidate = CandidateService(session).get_by_id(candidate_id)
         job_service = JobService(session)
@@ -93,49 +134,178 @@ def _cached_suitable_jobs(candidate_id: int, open_only: bool) -> list[dict]:
 
 
 def clear_suitable_jobs_cache() -> None:
-    """تُستدعى بعد تعديل مرشح أو وظيفة حتى لا تُعرض نتيجة مطابقة قديمة من الكاش."""
     _cached_suitable_jobs.clear()
 
 
-def render_profile(candidate_id: int) -> None:
-    with get_db_session() as session:
-        service = CandidateService(session)
-        candidate = service.get_by_id(candidate_id)
-        if candidate is None:
-            st.warning("المرشح غير موجود.")
-            return
-        photo_path = service.photo_absolute_path(candidate)
+# ------------------------------------------------------------ الترويسة والأزرار السريعة
 
-    lang_label = st.radio(
-        "🌐 لغة عرض البيانات", list(_LANG_OPTIONS.keys()), horizontal=True, key=f"lang_{candidate_id}"
-    )
-    lang = _LANG_OPTIONS[lang_label]
+def _go_to_interviews() -> None:
+    st.session_state[_NAV_KEY] = _INTERVIEWS_PAGE_LABEL
 
-    if lang == "ar" and not (candidate.translations or {}).get("ar"):
-        st.info("لا توجد ترجمة عربية لهذا المرشح بعد (يتم عرض النسخة الإنجليزية مؤقتاً).")
-        if st.button("🌐 ترجمة البيانات إلى العربية", key=f"translate_{candidate_id}"):
+
+def _render_header(candidate: Candidate, photo_path, lang: str) -> None:
+    col_photo, col_info = st.columns([1, 3])
+    with col_photo:
+        if photo_path:
+            st.image(str(photo_path), width=_PHOTO_WIDTH_PX)
+        else:
+            st.markdown("## 👤")
+    with col_info:
+        status = candidate.status or "New"
+        st.markdown(f"### {candidate.full_name}")
+        st.markdown(_badge(status, _STATUS_COLORS.get(status, "#64748b")), unsafe_allow_html=True)
+        position = _value(candidate, "current_position", lang)
+        st.caption(" · ".join(p for p in (position, f"🆔 {candidate.candidate_code}" if candidate.candidate_code else None) if p))
+
+    contact = [
+        f"📧 {html.escape(candidate.email)}" if candidate.email else None,
+        f"📞 {html.escape(candidate.phone)}" if candidate.phone else None,
+        f"📍 {html.escape(_value(candidate, 'location', lang))}" if _value(candidate, "location", lang) else None,
+    ]
+    if candidate.linkedin_url:
+        url = candidate.linkedin_url if candidate.linkedin_url.startswith("http") else f"https://{candidate.linkedin_url}"
+        contact.append(f'🔗 <a href="{html.escape(url, quote=True)}" target="_blank">LinkedIn</a>')
+    line = "  ·  ".join(c for c in contact if c)
+    if line:
+        st.markdown(f'<div style="font-size:.85rem">{line}</div>', unsafe_allow_html=True)
+
+
+def _render_actions(candidate: Candidate) -> None:
+    cid = candidate.id
+    col_iv, col_mail, col_stage, col_cv = st.columns(4)
+    col_iv.button("📅 مقابلة", key=f"act_iv_{cid}", on_click=_go_to_interviews, width="stretch",
+                  help="ينقلك لصفحة المقابلات (اختر الوظيفة والمرشح هناك).")
+    col_mail.link_button("✉️ بريد", f"mailto:{candidate.email}" if candidate.email else "#",
+                         disabled=not candidate.email, width="stretch")
+    with col_stage.popover("🔄 المرحلة"):
+        current = candidate.status if candidate.status in CANDIDATE_STATUSES else CANDIDATE_STATUSES[0]
+        new_status = st.selectbox("المرحلة الجديدة", CANDIDATE_STATUSES,
+                                  index=CANDIDATE_STATUSES.index(current), key=f"act_stage_{cid}")
+        if st.button("تطبيق", key=f"act_stage_btn_{cid}", type="primary"):
             try:
-                with st.spinner("جاري الترجمة..."):
-                    with get_db_session() as session:
-                        CandidateService(session).translate_candidate(candidate_id, "ar")
+                with get_db_session() as session:
+                    CandidateService(session).update_candidate(cid, status=new_status)
+                clear_related_caches()
+                st.toast("تم تغيير المرحلة ✅")
                 st.rerun()
             except SmartATSError as exc:
                 st.error(str(exc))
-        lang = "en"
+    col_cv.download_button(
+        "📥 السيرة", candidate.raw_text or "", file_name=f"{candidate.candidate_code or cid}_cv.txt",
+        disabled=not candidate.raw_text, key=f"act_cv_{cid}", width="stretch",
+        help="نص السيرة المستخرج (الملف الأصلي غير محفوظ).",
+    )
 
-    tab_card, tab_jobs, tab_edit = st.tabs(["📋 بطاقة المرشح", "🎯 الوظائف المناسبة", "✏️ تعديل"])
-    with tab_card:
-        _render_card(candidate, photo_path, lang)
-    with tab_jobs:
-        _render_suitable_jobs(candidate_id)
-    with tab_edit:
-        _render_edit_form(candidate, photo_path)
+
+def _kpis(candidate: Candidate, summary: dict | None) -> list[tuple[str, str]]:
+    years = candidate.total_experience_years
+    items = [("الخبرة", f"{years:g} سنة" if years is not None else "-")]
+    if summary is not None:
+        best = summary.get("best")
+        items += [("أفضل مطابقة", f"{best:g}%" if best is not None else "-"), ("التقديمات", str(summary.get("apps", 0)))]
+    items += [
+        ("التقييم", f"{candidate.rating}/5" if candidate.rating else "-"),
+        ("فترة الإشعار", f"{candidate.notice_period_days} يوم" if candidate.notice_period_days else "-"),
+        ("الراتب المتوقع", f"{candidate.expected_salary:,.0f}" if candidate.expected_salary else "-"),
+    ]
+    return items
+
+
+def _choose_language(candidate: Candidate) -> str:
+    """اختيار لغة العرض؛ إن لم توجد ترجمة عربية يعرض زر الترجمة ويرجع الإنجليزية."""
+    cid = candidate.id
+    label = st.radio("🌐 لغة العرض", list(_LANG_OPTIONS), horizontal=True, key=f"lang_{cid}", label_visibility="collapsed")
+    lang = _LANG_OPTIONS[label]
+    if lang == "ar" and not (candidate.translations or {}).get("ar"):
+        st.info("لا توجد ترجمة عربية بعد (تُعرض الإنجليزية مؤقتاً).")
+        if st.button("🌐 ترجمة البيانات إلى العربية", key=f"translate_{cid}"):
+            try:
+                with st.spinner("جاري الترجمة..."):
+                    with get_db_session() as session:
+                        CandidateService(session).translate_candidate(cid, "ar")
+                clear_related_caches()
+                st.rerun()
+            except SmartATSError as exc:
+                st.error(str(exc))
+        return "en"
+    return lang
+
+
+# ------------------------------------------------------------ التبويبات
+
+def _render_overview(candidate: Candidate, lang: str) -> None:
+    st.markdown('<div class="cp-title">📝 الملخص</div>', unsafe_allow_html=True)
+    st.write(_value(candidate, "summary", lang) or _NOT_MENTIONED)
+
+    st.markdown('<div class="cp-title">🧠 المهارات</div>', unsafe_allow_html=True)
+    shown = False
+    for title, attr in _SKILL_SECTIONS:
+        items = _value(candidate, attr, lang) or []
+        if items:
+            shown = True
+            st.caption(title)
+            st.markdown(_chips(items), unsafe_allow_html=True)
+    if not shown:
+        st.caption(_NOT_MENTIONED)
+
+    st.divider()
+    _render_ai_analysis(candidate.id)
+
+
+def _render_experience(candidate: Candidate, lang: str, collapsible: bool) -> None:
+    """بطاقات خبرات؛ قابلة للطي في اللوحة الجانبية، وثابتة داخل expander (لا يجوز تداخل expanders)."""
+    experience = _value(candidate, "experience", lang) or []
+    if not experience:
+        st.caption(_NOT_MENTIONED)
+        return
+    for index, item in enumerate(experience):
+        heading = " — ".join(p for p in (item.get("position"), item.get("company")) if p) or "غير محدد"
+        period = " → ".join(p for p in (item.get("start_date"), item.get("end_date")) if p)
+        holder = st.expander(f"💼 {heading}", expanded=index == 0) if collapsible else st.container(border=True)
+        with holder:
+            if not collapsible:
+                st.markdown(f"**{heading}**")
+            if period:
+                st.caption(period)
+            for line in (item.get("responsibilities") or [])[:_MAX_RESPONSIBILITIES_SHOWN]:
+                st.write(f"• {line}")
+
+
+def _render_details(candidate: Candidate, lang: str) -> None:
+    st.markdown('<div class="cp-title">🎓 التعليم</div>', unsafe_allow_html=True)
+    education = _value(candidate, "education", lang) or []
+    for item in education:
+        line = " — ".join(p for p in (item.get("degree"), item.get("major"), item.get("institution")) if p)
+        year = item.get("graduation_year")
+        st.write(f"• {line or 'غير محدد'}" + (f" ({year})" if year else ""))
+    if not education:
+        st.caption(_NOT_MENTIONED)
+
+    st.markdown('<div class="cp-title">🧍 بيانات شخصية</div>', unsafe_allow_html=True)
+    st.write(
+        f"العمر: {candidate.age if candidate.age is not None else 'غير مذكور'}  ·  "
+        f"الحالة الاجتماعية: {_value(candidate, 'marital_status', lang) or 'غير مذكور'}  ·  "
+        f"موقف التجنيد: {_value(candidate, 'military_status', lang) or 'غير مذكور'}"
+    )
+    languages = _value(candidate, _LANGUAGES_SECTION[1], lang) or []
+    st.caption(_LANGUAGES_SECTION[0])
+    st.markdown(_chips(languages) if languages else _NOT_MENTIONED, unsafe_allow_html=True)
+
+    for title, attr in _BACKGROUND_SECTIONS:
+        items = _value(candidate, attr, lang) or []
+        st.caption(title)
+        st.markdown(_chips(items) if items else _NOT_MENTIONED, unsafe_allow_html=True)
+
+    st.markdown('<div class="cp-title">🎯 بيانات التوظيف</div>', unsafe_allow_html=True)
+    st.write(f"الوظيفة المستهدفة: {candidate.applied_job or '-'}")
+    if candidate.recruiter_notes:
+        st.caption(f"📝 ملاحظات: {candidate.recruiter_notes}")
+    st.caption(f"📎 المصدر: {candidate.source_filename or 'إدخال يدوي'}")
 
 
 def _render_suitable_jobs(candidate_id: int) -> None:
     """أفضل الوظائف لهذا المرشح مع شرح الدرجة (بدون expander لأن البطاقة قد تكون داخل expander)."""
     open_only = st.checkbox("الوظائف المفتوحة فقط", value=True, key=f"jobs_open_only_{candidate_id}")
-
     results = _cached_suitable_jobs(candidate_id, open_only)
 
     if not results:
@@ -164,127 +334,7 @@ def _render_suitable_jobs(candidate_id: int) -> None:
                 st.write(line)
 
 
-def _render_best_jobs(candidate_id: int) -> None:
-    """أفضل الوظائف المفتوحة لهذا المرشح مع تفسير الدرجة (للعرض فقط)."""
-    with get_db_session() as session:
-        candidate = CandidateService(session).get_by_id(candidate_id)
-        jobs = JobService(session).list_open()
-        results = (
-            MatchingService(session).top_jobs_for_candidate(candidate, jobs, _TOP_JOBS_COUNT)
-            if candidate is not None and jobs
-            else []
-        )
-
-    if not jobs:
-        st.info("لا توجد وظائف مفتوحة حالياً. أضف وظيفة من صفحة «الوظائف».")
-        return
-
-    st.caption(f"أفضل {len(results)} وظيفة مفتوحة مطابقة لهذا المرشح (حسب القواعد الحالية، وللمراجعة البشرية فقط).")
-    for r in results:
-        job = r["job"]
-        with st.container(border=True):
-            col_info, col_score = st.columns([3, 1])
-            with col_info:
-                st.markdown(f"**{job.title}**")
-                st.caption(f"{job.department or 'بدون قسم'} · {job.location or 'بدون موقع'}")
-            with col_score:
-                st.metric("المطابقة", f"{r['score']}%")
-            with st.expander("تفاصيل الدرجة"):
-                b = r["breakdown"]
-                st.write(
-                    f"المهارات: {b['skills']}% · الخبرة: {b['experience']}% · "
-                    f"الموقع: {b['location']}% · التعليم: {b['education']}%"
-                )
-                for line in r["strengths"] + r["gaps"]:
-                    st.write(line)
-
-
-def _render_card(candidate: Candidate, photo_path, lang: str) -> None:
-    col_photo, col_info = st.columns([1, 3])
-    with col_photo:
-        if photo_path:
-            st.image(str(photo_path), width=_PHOTO_WIDTH_PX)
-        else:
-            st.markdown("## 👤")
-            st.caption("لا توجد صورة")
-    with col_info:
-        st.subheader(candidate.full_name)
-        st.caption(f"🆔 {candidate.candidate_code or '-'}  ·  📌 الحالة: {candidate.status or 'New'}")
-        position = _value(candidate, "current_position", lang)
-        if position:
-            st.markdown(f"**{position}**")
-        st.write(
-            f"📧 {candidate.email or '-'}  ·  📞 {candidate.phone or '-'}  ·  "
-            f"📍 {_value(candidate, 'location', lang) or '-'}"
-        )
-        if candidate.linkedin_url:
-            st.write(f"🔗 {candidate.linkedin_url}")
-        if candidate.total_experience_years is not None:
-            st.write(f"⏳ الخبرة: {candidate.total_experience_years:g} سنة")
-        if candidate.age is not None:
-            st.write(f"🎂 العمر: {candidate.age} سنة")
-
-    st.markdown("**🎯 بيانات التوظيف**")
-    salary = f"{candidate.expected_salary:,.0f}" if candidate.expected_salary else "-"
-    rating = f"{candidate.rating}/5" if candidate.rating else "-"
-    notice = f"{candidate.notice_period_days} يوم" if candidate.notice_period_days else "-"
-    st.write(
-        f"الوظيفة المستهدفة: {candidate.applied_job or '-'}  ·  التقييم: {rating}  ·  "
-        f"الراتب المتوقع: {salary}  ·  فترة الإشعار: {notice}"
-    )
-    if candidate.recruiter_notes:
-        st.caption(f"📝 ملاحظات: {candidate.recruiter_notes}")
-
-    st.markdown("**🧍 الحالة الشخصية**")
-    marital = _value(candidate, "marital_status", lang)
-    military = _value(candidate, "military_status", lang)
-    st.write(f"الحالة الاجتماعية: {marital or 'غير مذكور'}  ·  موقف التجنيد: {military or 'غير مذكور'}")
-    languages = _value(candidate, _LANGUAGES_SECTION[1], lang) or []
-    st.markdown(f"**{_LANGUAGES_SECTION[0]}**")
-    if languages:
-        st.markdown(_tags(languages))
-    else:
-        st.caption(_NOT_MENTIONED)
-
-    st.markdown("**📝 نبذة**")
-    st.write(_value(candidate, "summary", lang) or "غير مذكور")
-
-    for title, attr in _SKILL_SECTIONS + _BACKGROUND_SECTIONS:
-        st.markdown(f"**{title}**")
-        items = _value(candidate, attr, lang) or []
-        if items:
-            st.markdown(_tags(items))
-        else:
-            st.caption(_NOT_MENTIONED)
-
-    st.markdown("**💼 الخبرات العملية**")
-    experience = _value(candidate, "experience", lang) or []
-    for item in experience:
-        heading = " — ".join(p for p in (item.get("position"), item.get("company")) if p) or "غير محدد"
-        period = " → ".join(p for p in (item.get("start_date"), item.get("end_date")) if p)
-        with st.container(border=True):
-            st.markdown(f"**{heading}**")
-            if period:
-                st.caption(period)
-            for line in (item.get("responsibilities") or [])[:_MAX_RESPONSIBILITIES_SHOWN]:
-                st.write(f"• {line}")
-    if not experience:
-        st.caption(_NOT_MENTIONED)
-
-    st.markdown("**🎓 التعليم**")
-    education = _value(candidate, "education", lang) or []
-    for item in education:
-        line = " — ".join(p for p in (item.get("degree"), item.get("major"), item.get("institution")) if p)
-        year = item.get("graduation_year")
-        st.write(f"• {line or 'غير محدد'}" + (f" ({year})" if year else ""))
-    if not education:
-        st.caption(_NOT_MENTIONED)
-
-    st.caption(f"📎 المصدر: {candidate.source_filename or 'إدخال يدوي'}")
-    st.divider()
-    _render_ai_analysis(candidate.id)
-
-
+# ------------------------------------------------------------ تحليل الذكاء الاصطناعي
 
 def _render_ai_analysis(candidate_id: int) -> None:
     st.markdown("**🤖 تحليل الذكاء الاصطناعي**")
@@ -321,6 +371,7 @@ def _analysis_panel(candidate_id: int, polling: bool) -> None:
                 with st.spinner("جاري التحليل..."):
                     with get_db_session() as session:
                         CandidateService(session).generate_ai_analysis(candidate_id, force=bool(analysis))
+                clear_related_caches()
                 st.rerun()
             except SmartATSError as exc:
                 st.error(str(exc))
@@ -339,10 +390,13 @@ def _analysis_panel(candidate_id: int, polling: bool) -> None:
             st.write(f"⚠ {g}")
     if analysis.get("suitable_functions"):
         st.markdown("**الأقسام/الوظائف المناسبة:**")
-        st.markdown(_tags(analysis["suitable_functions"]))
+        st.markdown(_chips(analysis["suitable_functions"]), unsafe_allow_html=True)
     meta = analysis.get("meta") or {}
     if meta:
         st.caption(f" {meta.get('created_at', '')[:16]}")
+
+
+# ------------------------------------------------------------ تعديل
 
 def _render_edit_form(candidate: Candidate, photo_path) -> None:
     cid = candidate.id
@@ -356,7 +410,7 @@ def _render_edit_form(candidate: Candidate, photo_path) -> None:
         age = st.number_input(
             "العمر", min_value=0, max_value=100, step=1,
             value=int(candidate.age or 0), key=f"age_{cid}",
-        )        
+        )
         position = st.text_input("المسمى الوظيفي الحالي", value=candidate.current_position or "", key=f"pos_{cid}")
         experience = st.number_input(
             "سنوات الخبرة", min_value=0.0, step=0.5,
@@ -431,13 +485,51 @@ def _render_edit_form(candidate: Candidate, photo_path) -> None:
                 service.remove_photo(cid)
             elif new_photo is not None:
                 service.set_photo(cid, new_photo.getvalue())
-        clear_suitable_jobs_cache()  # بيانات المرشح تغيّرت - أي مطابقة مخزّنة له أصبحت قديمة
-        try:
-            from views import matching as _matching
-            _matching._cached_candidates.clear()
-        except Exception:
-            pass
+        clear_related_caches()  # بيانات المرشح تغيّرت - أي كاش له أصبح قديماً
         st.toast("تم حفظ التعديلات ✅")
         st.rerun()
     except SmartATSError as exc:
         st.error(str(exc))
+
+
+# ------------------------------------------------------------ نقاط الدخول
+
+def render_drawer(candidate_id: int, summary: dict | None = None, *, embedded: bool = False) -> None:
+    """
+    بطاقة المرشح الكاملة.
+    embedded=True: للاستخدام داخل expander (لا أزرار سريعة، ولا expanders متداخلة).
+    summary: {"best": أفضل مطابقة، "apps": عدد التقديمات} لإظهار مؤشرات المطابقة (اختياري).
+    """
+    with get_db_session() as session:
+        service = CandidateService(session)
+        candidate = service.get_by_id(candidate_id)
+        if candidate is None:
+            st.warning("المرشح غير موجود.")
+            return
+        photo_path = service.photo_absolute_path(candidate)
+
+    _inject_css()
+    lang = _choose_language(candidate)
+    _render_header(candidate, photo_path, lang)
+    if not embedded:
+        _render_actions(candidate)
+    st.markdown(_kpi_html(_kpis(candidate, None if embedded else summary)), unsafe_allow_html=True)
+
+    tab_overview, tab_exp, tab_details, tab_jobs, tab_edit = st.tabs(
+        ["📋 نظرة عامة", "💼 الخبرات", "🎓 التفاصيل", "🎯 الوظائف المناسبة", "✏️ تعديل"]
+    )
+    with tab_overview:
+        _render_overview(candidate, lang)
+    with tab_exp:
+        _render_experience(candidate, lang, collapsible=not embedded)
+    with tab_details:
+        _render_details(candidate, lang)
+    with tab_jobs:
+        _render_suitable_jobs(candidate_id)
+    with tab_edit:
+        _render_edit_form(candidate, photo_path)
+
+
+def render_profile(candidate_id: int) -> None:
+    """واجهة قديمة تستخدمها صفحتا رفع السير والمقابلات (داخل expander)."""
+    render_drawer(candidate_id, embedded=True)

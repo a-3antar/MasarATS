@@ -12,6 +12,7 @@ from datetime import date
 from pathlib import Path
 
 from sqlalchemy.orm import Session
+from repositories.application_repository import ApplicationRepository
 
 from ai.fallback_extractor import extract_basic_profile
 from ai.schemas import CandidateProfile, ExperienceItem
@@ -430,3 +431,7 @@ class CandidateService:
             logger.warning("Direct file extraction failed, using legacy path: %s", exc)
             raw_text = parser.extract_text(file_path)
             return self._extract_profile(raw_text, fallback_name), raw_text
+
+    def match_summary(self) -> dict[int, dict]:
+        """{candidate_id: {"best": أفضل مطابقة, "apps": عدد التقديمات}} لعرضها في جدول المرشحين."""
+        return ApplicationRepository(self._session).summary_by_candidate()

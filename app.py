@@ -220,7 +220,7 @@ def _authenticated_view() -> None:
         st.markdown(f"**{user['full_name']}**")
         st.caption(f"@{user['username']} · {user['role']}")
         st.divider()
-        selected_page = st.radio("التنقل", list(views.keys()), label_visibility="collapsed")
+        selected_page = st.radio("التنقل", list(views.keys()), label_visibility="collapsed", key="nav_page")
         st.divider()
         if st.button("تسجيل الخروج", width='stretch'):
             _clear_remember_cookie()

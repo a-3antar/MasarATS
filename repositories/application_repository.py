@@ -1,6 +1,6 @@
 """مستودع التقديمات: استعلامات خاصة بجدول applications."""
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, func
 from sqlalchemy.orm import Session
 
 from models.application import Application
@@ -32,3 +32,13 @@ class ApplicationRepository(BaseRepository[Application]):
     def get_for_candidate(self, candidate_id: int) -> list[Application]:
         stmt = select(Application).where(Application.candidate_id == candidate_id)
         return list(self._session.scalars(stmt).all())
+
+    def summary_by_candidate(self) -> dict[int, dict]:
+        """أفضل درجة مطابقة وعدد التقديمات لكل مرشح - استعلام واحد لكل المرشحين."""
+        stmt = select(
+            Application.candidate_id, func.max(Application.match_score), func.count()
+        ).group_by(Application.candidate_id)
+        return {
+            cid: {"best": best, "apps": total}
+            for cid, best, total in self._session.execute(stmt).all()
+        }

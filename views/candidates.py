@@ -1,111 +1,132 @@
-"""صفحة عرض وبحث المرشحين، مع فتح بطاقة المرشح الموحّدة عند اختيار صف."""
+"""صفحة المرشحين بتخطيط Master-Detail: جدول مركّز + شريط فلاتر ذكي + لوحة جانبية لبطاقة المرشح.
+الأداء: تحميل واحد مخزّن مؤقتاً لكل المرشحين، فلترة وترتيب في الذاكرة، وترقيم صفحات (الصور تُحمَّل لصفحة واحدة فقط)."""
+
+import base64
+import hashlib
+import io
+from collections import Counter
 
 import pandas as pd
 import streamlit as st
 
+from ai.schemas import CandidateSearchFilters
+from core.constants import CANDIDATE_STATUSES, SEARCH_MAX_CANDIDATES
+from core.exceptions import AIServiceError
 from database.database import get_db_session
+from matching.skill_normalizer import canonical_skill_set, has_skill
 from models.candidate import Candidate
-from views import candidate_profile
 from services.candidate_service import CandidateService
 from services.export_service import ExportService
-
-from ai.schemas import CandidateSearchFilters
-from core.exceptions import AIServiceError
 from services.search_service import SearchService
+from views import candidate_profile
+
+_LIST_TTL = 30                  # ثوانٍ - كاش قائمة المرشحين
+_THUMB_PX = 48                  # حجم الصورة الرمزية في الجدول
+_EXP_MAX = 30                   # أقصى قيمة في شريط الخبرة (30 = "30 فأكثر")
+_TOP_SKILLS_OPTIONS = 60        # عدد المهارات المعروضة في فلتر المهارات
+_TOP_LOCATIONS_OPTIONS = 60
+_TABLE_HEIGHT = 620
+_DRAWER_HEIGHT = 780
+_PAGE_SIZES = [10, 25, 50, 100]
+_DEFAULT_PAGE_SIZE = 25
+_SMART_CACHE_TTL = 3600
+
+_STATUS_ICONS = {
+    "New": "⚪", "Screening": "🔵", "Shortlisted": "🟢", "Interview": "🟠",
+    "Offer": "🟣", "Hired": "✅", "Rejected": "🔴",
+}
+_SORT_OPTIONS = ["الأحدث", "الأعلى مطابقة", "الأكثر خبرة", "الاسم"]
+
+_TABLE_VER_KEY = "cand_table_ver"
+_FILTER_DEFAULTS = {
+    "cand_f_status": [], "cand_f_level": [], "cand_f_exp": (0, _EXP_MAX),
+    "cand_f_loc": [], "cand_f_skills": [], "cand_sort": _SORT_OPTIONS[0], "candidates_query": "",
+}
 
 
-_MAX_SKILLS_IN_TABLE = None  # الحد الأقصى لعدد المهارات التي سيتم عرضها في الجدول، أو None لعرض جميع المهارات
+# ------------------------------------------------------------ تحميل البيانات (مخزّن مؤقتاً)
+
+@st.cache_data(ttl=_LIST_TTL, show_spinner=False)
+def _load_data() -> dict:
+    """كل المرشحين + ملخص المطابقة + خيارات الفلاتر - استعلام واحد لكل مدة الكاش."""
+    with get_db_session() as session:
+        service = CandidateService(session)
+        candidates = service.list_all(limit=SEARCH_MAX_CANDIDATES)
+        summary = service.match_summary()
+        photos = {c.id: service.photo_absolute_path(c) for c in candidates}
+
+    skills: Counter[str] = Counter()
+    locations: Counter[str] = Counter()
+    levels: set[str] = set()
+    for c in candidates:
+        skills.update(s.strip() for s in c.all_skills if s.strip())
+        if c.location:
+            locations[c.location.strip()] += 1
+        level = ((c.ai_analysis or {}).get("career_level") or "").strip()
+        if level:
+            levels.add(level)
+
+    return {
+        "candidates": candidates,
+        "summary": summary,
+        "photos": {cid: str(p) if p else None for cid, p in photos.items()},
+        "top_skills": [s for s, _ in skills.most_common(_TOP_SKILLS_OPTIONS)],
+        "locations": [l for l, _ in locations.most_common(_TOP_LOCATIONS_OPTIONS)],
+        "levels": sorted(levels),
+    }
 
 
-def _invalidate_candidate_related_caches() -> None:
-    """مسح كاش قائمة المرشحين في صفحة المطابقة بعد إضافة/تعديل مرشح."""
+@st.cache_data(show_spinner=False, max_entries=2000)
+def _thumb_uri(path: str) -> str | None:
+    """صورة رمزية مصغّرة كـ data URI لعرضها داخل الجدول."""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            image = image.convert("RGB")
+            image.thumbnail((_THUMB_PX, _THUMB_PX))
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=80)
+        return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode()
+    except Exception:  # noqa: BLE001 - صورة تالفة لا توقف الصفحة
+        return None
+
+
+@st.cache_data(show_spinner="🤖 جاري فهم طلب البحث...", ttl=_SMART_CACHE_TTL)
+def _smart_search(query: str) -> dict:
+    """بحث بلغة طبيعية: {filters, results: [(candidate_id, reason)]}. مخزّن حتى لا يُستدعى Gemini عند كل rerun."""
+    filters = SearchService.parse_query(query)
+    with get_db_session() as session:
+        found = SearchService(session).search(filters)
+    return {
+        "filters": filters.model_dump(),
+        "results": [(r["candidate"].id, " · ".join(r["reasons"]) or "-") for r in found],
+    }
+
+
+@st.cache_data(ttl=_LIST_TTL, show_spinner="جاري تجهيز الملف...")
+def _export(kind: str, ids: tuple[int, ...]) -> bytes:
+    wanted = set(ids)
+    selected = [c for c in _load_data()["candidates"] if c.id in wanted]
+    if kind == "csv":
+        return ExportService.to_csv_bytes(ExportService.candidates_to_dataframe(selected))
+    if kind == "xlsx":
+        return ExportService.to_excel_bytes(ExportService.candidates_to_dataframe(selected), "Candidates")
+    return ExportService.candidates_to_organized_workbook_bytes(selected)
+
+
+def invalidate_cache() -> None:
+    """مسح كاش القائمة بعد إضافة/تعديل مرشح."""
+    _load_data.clear()
+    _export.clear()
     try:
         from views import matching as _matching
         _matching._cached_candidates.clear()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
-def _join(items: list[str] | None, limit: int | None = None) -> str:
-    items = items or []
-    return ", ".join(items[:limit]) if items else "-"
-
-
-def _education_text(items: list[dict] | None) -> str:
-    lines = []
-    for e in items or []:
-        line = " — ".join(p for p in (e.get("degree"), e.get("major"), e.get("institution")) if p)
-        if line:
-            lines.append(line)
-    return "; ".join(lines) if lines else "-"
-
-def _to_row(c: Candidate) -> dict:
-    years = c.total_experience_years
-    return {
-        "الكود": c.candidate_code or "-",
-        "الاسم": c.full_name,
-        "البريد": c.email or "-",
-        "الهاتف": c.phone or "-",
-        "العمر": str(c.age) if c.age is not None else "-",
-        "LinkedIn": c.linkedin_url or "-",
-        "الموقع": c.location or "-",
-        "المسمى الحالي": c.current_position or "-",
-        "الوظيفة المستهدفة": c.applied_job or "-",
-        "الحالة": c.status or "New",
-        "التقييم": str(c.rating) if c.rating else "-",
-        "الخبرة (سنة)": f"{years:g}" if years is not None else "-",
-        "الراتب المتوقع": f"{c.expected_salary:,.0f}" if c.expected_salary else "-",
-        "فترة الإشعار (يوم)": str(c.notice_period_days) if c.notice_period_days else "-",
-        "الحالة الاجتماعية": c.marital_status or "-",
-        "موقف التجنيد": c.military_status or "-",
-        "اللغات": _join(c.languages),
-        "التعليم": _education_text(c.education),
-        "المهارات الفنية": _join(c.technical_skills, _MAX_SKILLS_IN_TABLE),
-        "مهارات الكمبيوتر": _join(c.computer_skills, _MAX_SKILLS_IN_TABLE),
-        "المهارات الإدارية": _join(c.managerial_skills, _MAX_SKILLS_IN_TABLE),
-        "المهارات الشخصية": _join(c.soft_skills, _MAX_SKILLS_IN_TABLE),
-        "المسميات السابقة": _join(c.previous_positions),
-        "مجالات العمل السابقة": _join(c.industries),
-        "الشركات السابقة": _join(c.previous_companies),
-        "ملاحظات": c.recruiter_notes or "-",
-        "مصدر الملف": c.source_filename or "إدخال يدوي",
-    }
-
-def _render_manual_form() -> None:
-    with st.expander("➕ إضافة مرشح يدوياً"):
-        with st.form("manual_candidate_form"):
-            full_name = st.text_input("الاسم الكامل *")
-            email = st.text_input("البريد الإلكتروني")
-            phone = st.text_input("الهاتف")
-            age = st.number_input("العمر", min_value=0, max_value=100, step=1)
-            current_position = st.text_input("المسمى الوظيفي الحالي")
-            experience = st.number_input("سنوات الخبرة", min_value=0.0, step=0.5)
-            skills_raw = st.text_input("المهارات (مفصولة بفاصلة)")
-            submitted = st.form_submit_button("حفظ")
-
-        if submitted:
-            try:
-                with get_db_session() as session:
-                    CandidateService(session).create_manual(
-                        full_name=full_name,
-                        email=email or None,
-                        phone=phone or None,
-                        age=int(age) or None,
-                        current_position=current_position or None,
-                        total_experience_years=experience or None,
-                        skills=[s.strip() for s in skills_raw.split(",") if s.strip()],
-                    )
-                _invalidate_candidate_related_caches()
-                st.success("تمت إضافة المرشح. يمكنك تصنيف مهاراته من بطاقته > تعديل.")
-                st.rerun()
-            except Exception as exc:  # noqa: BLE001 - عرض أي خطأ تحقق للمستخدم مباشرة
-                st.error(str(exc))
-
-@st.cache_data(show_spinner="🤖 جاري فهم طلب البحث...", ttl=3600)
-def _parse_search_query(query: str) -> dict:
-    """مخزّنة مؤقتاً حتى لا يُستدعى Gemini عند كل rerun (مثل اختيار صف في الجدول)."""
-    return SearchService.parse_query(query).model_dump()
-
+# ------------------------------------------------------------ الفلترة والترتيب (في الذاكرة)
 
 def _describe_filters(f: CandidateSearchFilters) -> str:
     parts = []
@@ -124,78 +145,246 @@ def _describe_filters(f: CandidateSearchFilters) -> str:
     return " | ".join(parts) or "لم يُستخرج أي فلتر من الطلب"
 
 
+def _text_match(c: Candidate, query: str) -> bool:
+    haystack = " ".join(
+        str(v) for v in (
+            c.full_name, c.email, c.phone, c.candidate_code, c.current_position, c.applied_job,
+            " ".join(c.all_skills), " ".join(c.previous_companies or []),
+        ) if v
+    ).lower()
+    return all(token in haystack for token in query.lower().split())
+
+
+def _passes_filters(c: Candidate, f: dict) -> bool:
+    if f["status"] and (c.status or "New") not in f["status"]:
+        return False
+    if f["level"] and ((c.ai_analysis or {}).get("career_level") or "") not in f["level"]:
+        return False
+    low, high = f["exp"]
+    years = c.total_experience_years
+    if low > 0 or high < _EXP_MAX:
+        if years is None or years < low or (high < _EXP_MAX and years > high):
+            return False
+    if f["loc"] and (c.location or "").strip() not in f["loc"]:
+        return False
+    if f["skills"]:
+        keys = canonical_skill_set(c.all_skills)
+        if not all(has_skill(s, keys) for s in f["skills"]):
+            return False
+    return True
+
+
+def _sort(items: list[Candidate], summary: dict, mode: str) -> list[Candidate]:
+    if mode == "الأعلى مطابقة":
+        return sorted(items, key=lambda c: (summary.get(c.id) or {}).get("best") or -1, reverse=True)
+    if mode == "الأكثر خبرة":
+        return sorted(items, key=lambda c: c.total_experience_years or -1, reverse=True)
+    if mode == "الاسم":
+        return sorted(items, key=lambda c: c.full_name.lower())
+    return sorted(items, key=lambda c: c.id, reverse=True)
+
+
+# ------------------------------------------------------------ مكوّنات الواجهة
+
+def _reset_filters() -> None:
+    for key, value in _FILTER_DEFAULTS.items():
+        st.session_state[key] = value
+
+
+def _close_drawer() -> None:
+    st.session_state[_TABLE_VER_KEY] = st.session_state.get(_TABLE_VER_KEY, 0) + 1  # مفتاح جديد = تصفير التحديد
+
+
+def _render_manual_form() -> None:
+    with st.form("manual_candidate_form"):
+        full_name = st.text_input("الاسم الكامل *")
+        email = st.text_input("البريد الإلكتروني")
+        phone = st.text_input("الهاتف")
+        age = st.number_input("العمر", min_value=0, max_value=100, step=1)
+        current_position = st.text_input("المسمى الوظيفي الحالي")
+        experience = st.number_input("سنوات الخبرة", min_value=0.0, step=0.5)
+        skills_raw = st.text_input("المهارات (مفصولة بفاصلة)")
+        submitted = st.form_submit_button("حفظ", type="primary")
+
+    if submitted:
+        try:
+            with get_db_session() as session:
+                CandidateService(session).create_manual(
+                    full_name=full_name,
+                    email=email or None,
+                    phone=phone or None,
+                    age=int(age) or None,
+                    current_position=current_position or None,
+                    total_experience_years=experience or None,
+                    skills=[s.strip() for s in skills_raw.split(",") if s.strip()],
+                )
+            invalidate_cache()
+            st.toast("تمت إضافة المرشح ✅")
+            st.rerun()
+        except Exception as exc:  # noqa: BLE001 - عرض أي خطأ تحقق للمستخدم مباشرة
+            st.error(str(exc))
+
+
+def _render_toolbar(data: dict) -> tuple[str, bool]:
+    """الصف الأول: بحث + بحث ذكي + إضافة. الصف الثاني: الفلاتر. يرجع (نص البحث، هل البحث الذكي مفعّل)."""
+    with st.container(border=True):
+        col_search, col_ai, col_add = st.columns([5, 1.6, 1.2])
+        smart = col_ai.toggle(
+            "🤖 بحث ذكي", key="candidates_smart_toggle",
+            help="مثال: مدير إنتاج بخبرة أكثر من 10 سنوات في البلاستيك ويعرف الحقن والبثق في العاشر من رمضان",
+        )
+        query = col_search.text_input(
+            "بحث", key="candidates_query", label_visibility="collapsed",
+            placeholder="صف المرشح المطلوب بلغة طبيعية..." if smart
+            else "🔍 بحث بالاسم، البريد، الهاتف، الكود، المسمى، المهارات، الشركة...",
+        )
+        with col_add.popover("➕ إضافة مرشح"):
+            _render_manual_form()
+
+        c1, c2, c3, c4, c5, c6 = st.columns([1.3, 1.3, 1.6, 1.3, 1.6, 1.2])
+        c1.multiselect("الحالة", CANDIDATE_STATUSES, key="cand_f_status", placeholder="الحالة")
+        c2.multiselect("المستوى", data["levels"], key="cand_f_level", placeholder="المستوى الوظيفي")
+        c3.slider("الخبرة (سنة)", 0, _EXP_MAX, key="cand_f_exp", value=_FILTER_DEFAULTS["cand_f_exp"])
+        c4.multiselect("الموقع", data["locations"], key="cand_f_loc", placeholder="الموقع")
+        c5.multiselect("المهارات", data["top_skills"], key="cand_f_skills", placeholder="المهارات")
+        c6.selectbox("الترتيب", _SORT_OPTIONS, key="cand_sort")
+    return query.strip(), smart
+
+
+def _render_export(ids: list[int]) -> None:
+    with st.popover("⬇️ تصدير"):
+        st.caption(f"{len(ids)} مرشح (كل النتائج الحالية وليس الصفحة فقط)")
+        if not ids:
+            return
+        if st.toggle("تجهيز ملفات التصدير", key="cand_export_toggle"):
+            key = tuple(ids)
+            st.download_button("📄 CSV", _export("csv", key), file_name="candidates.csv",
+                               mime="text/csv", width="stretch", key="dl_cand_csv")
+            st.download_button(
+                "📊 Excel", _export("xlsx", key), file_name="candidates.xlsx", width="stretch", key="dl_cand_xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            st.download_button(
+                "🗂️ Excel منظّم", _export("organized", key), file_name="candidates_organized.xlsx",
+                width="stretch", key="dl_cand_org",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+
+def _selected_id(table_key: str, page_ids: list[int]) -> int | None:
+    """المرشح المحدد في الجدول من الدورة السابقة (نحتاجه قبل رسم الجدول لتحديد التخطيط)."""
+    try:
+        rows = st.session_state[table_key]["selection"]["rows"]
+    except (KeyError, TypeError):
+        return None
+    return page_ids[rows[0]] if rows and rows[0] < len(page_ids) else None
+
+
+def _build_rows(page_items: list[Candidate], data: dict, reasons: dict[int, str]) -> list[dict]:
+    rows = []
+    for c in page_items:
+        photo = data["photos"].get(c.id)
+        row = {
+            "الصورة": _thumb_uri(photo) if photo else None,
+            "الاسم": c.full_name,
+            "الوظيفة الحالية": c.current_position or "-",
+            "الحالة": f"{_STATUS_ICONS.get(c.status or 'New', '⚪')} {c.status or 'New'}",
+            "المطابقة": (data["summary"].get(c.id) or {}).get("best"),
+            "الخبرة": c.total_experience_years,
+            "الموقع": c.location or "-",
+        }
+        if reasons:
+            row["سبب التطابق"] = reasons.get(c.id, "-")
+        rows.append(row)
+    return rows
+
+
+_COLUMN_CONFIG = {
+    "الصورة": st.column_config.ImageColumn("", width="small"),
+    "الاسم": st.column_config.TextColumn("الاسم", width="medium"),
+    "الحالة": st.column_config.TextColumn("الحالة", width="small"),
+    "المطابقة": st.column_config.ProgressColumn("المطابقة", min_value=0, max_value=100, format="%.0f%%"),
+    "الخبرة": st.column_config.NumberColumn("الخبرة", format="%.1f سنة", width="small"),
+}
+
+
 def render() -> None:
     st.header("👥 المرشحون")
 
-    _render_manual_form()
+    data = _load_data()
+    candidates: list[Candidate] = data["candidates"]
+    summary: dict = data["summary"]
 
-    smart = st.toggle(
-        "🤖 بحث بلغة طبيعية", key="candidates_smart_toggle",
-        help="مثال: مدير إنتاج بخبرة أكثر من 10 سنوات في البلاستيك ويعرف الحقن والبثق في العاشر من رمضان",
-    )
-    query = st.text_input(
-        "صف المرشح المطلوب" if smart else "بحث بالاسم / البريد / المسمى الوظيفي", "", key="candidates_query"
-    )
+    query, smart = _render_toolbar(data)
 
-    filters: CandidateSearchFilters | None = None
-    if smart and query.strip():
+    # ---- البحث
+    reasons: dict[int, str] = {}
+    pool = candidates
+    if smart and query:
         try:
-            filters = CandidateSearchFilters(**_parse_search_query(query.strip()))
-            st.caption(f"🔎 {_describe_filters(filters)}")
+            found = _smart_search(query)
+            st.caption(f"🔎 {_describe_filters(CandidateSearchFilters(**found['filters']))}")
+            by_id = {c.id: c for c in candidates}
+            reasons = dict(found["results"])
+            pool = [by_id[cid] for cid, _ in found["results"] if cid in by_id]
         except AIServiceError as exc:
             st.warning(f"تعذّر الفهم الذكي للطلب ({exc}) — تم استخدام البحث النصي العادي.")
+            pool = [c for c in candidates if _text_match(c, query)]
+    elif query:
+        pool = [c for c in candidates if _text_match(c, query)]
 
-    reasons: dict[int, str] = {}
-    with get_db_session() as session:
-        if filters is not None:
-            found = SearchService(session).search(filters)
-            candidates = [r["candidate"] for r in found]
-            reasons = {r["candidate"].id: " · ".join(r["reasons"]) or "-" for r in found}
-        else:
-            candidates = CandidateService(session).search(query)
-        candidate_ids = [c.id for c in candidates]
-        rows = [_to_row(c) for c in candidates]
-        if filters is not None:
-            rows = [{**row, "سبب التطابق": reasons[c.id]} for row, c in zip(rows, candidates)]
-        export_df = ExportService.candidates_to_dataframe(candidates)
+    # ---- الفلاتر والترتيب
+    f = {k: st.session_state.get(f"cand_f_{k}", _FILTER_DEFAULTS[f"cand_f_{k}"])
+         for k in ("status", "level", "exp", "loc", "skills")}
+    filtered = [c for c in pool if _passes_filters(c, f)]
+    if not (smart and query and reasons):  # نتائج البحث الذكي تبقى مرتبة حسب الصلة
+        filtered = _sort(filtered, summary, st.session_state.get("cand_sort", _SORT_OPTIONS[0]))
 
-    if not rows:
-        st.info("لا توجد نتائج مطابقة." if query.strip()
-                else "لا يوجد مرشحون بعد. ابدأ برفع سيرة ذاتية من صفحة «رفع سيرة ذاتية».")
+    # ---- شريط الأدوات فوق الجدول
+    info_col, clear_col, export_col = st.columns([5, 1.2, 1.2])
+    info_col.caption(f"النتائج: **{len(filtered)}** من {len(candidates)} مرشح")
+    clear_col.button("🧹 مسح الفلاتر", on_click=_reset_filters, width="stretch")
+    with export_col:
+        _render_export([c.id for c in filtered])
+
+    if not filtered:
+        st.info("لا توجد نتائج مطابقة." if (query or any(f.values())) else
+                "لا يوجد مرشحون بعد. ابدأ برفع سيرة ذاتية من صفحة «رفع سيرة ذاتية».")
         return
 
-    csv_col, xlsx_col, organized_col, _ = st.columns([1, 1, 1, 3])
-    with csv_col:
-        st.download_button(
-            "⬇️ CSV", ExportService.to_csv_bytes(export_df),
-            file_name="candidates.csv", mime="text/csv", width="stretch",
-        )
-    with xlsx_col:
-        st.download_button(
-            "⬇️ Excel", ExportService.to_excel_bytes(export_df, "Candidates"),
-            file_name="candidates.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
-        )
-    with organized_col:
-        st.download_button(
-            "⬇️ ملف منظّم", ExportService.candidates_to_organized_workbook_bytes(candidates),
-            file_name="candidates_organized.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
-        )
+    # ---- ترقيم الصفحات (القيم تُقرأ من session_state قبل رسم أدواتها أسفل الجدول)
+    page_size = st.session_state.get("cand_page_size", _DEFAULT_PAGE_SIZE)
+    pages = max(1, -(-len(filtered) // page_size))
+    page = min(max(st.session_state.get("cand_page", 1), 1), pages)
+    st.session_state["cand_page"] = page
+    start = (page - 1) * page_size
+    page_items = filtered[start:start + page_size]
+    page_ids = [c.id for c in page_items]
 
-    event = st.dataframe(
-        pd.DataFrame(rows),
-        width="stretch",
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="candidates_table",
-    )
-    st.caption(f"إجمالي النتائج: {len(rows)} — اضغط على أي صف لعرض بطاقة المرشح الكاملة.")
+    signature = hashlib.md5(",".join(map(str, page_ids)).encode()).hexdigest()[:8]
+    table_key = f"cand_tbl_{st.session_state.get(_TABLE_VER_KEY, 0)}_{signature}"
+    selected_id = _selected_id(table_key, page_ids)
 
-    selected_rows = event.selection.rows
-    if selected_rows and selected_rows[0] < len(candidate_ids):
-        st.divider()
-        candidate_profile.render_profile(candidate_ids[selected_rows[0]])
+    # ---- Master-Detail: الجدول + اللوحة الجانبية
+    if selected_id is not None:
+        table_area, drawer_area = st.columns([5, 4], gap="medium")
+    else:
+        table_area, drawer_area = st.container(), None
+
+    with table_area:
+        st.dataframe(
+            pd.DataFrame(_build_rows(page_items, data, reasons)),
+            width="stretch", hide_index=True, height=_TABLE_HEIGHT,
+            on_select="rerun", selection_mode="single-row", key=table_key,
+            column_config=_COLUMN_CONFIG,
+        )
+        col_info, col_size, col_page = st.columns([3, 1, 1])
+        col_info.caption(f"عرض {start + 1}–{start + len(page_items)} من {len(filtered)} — اضغط على صف لفتح البطاقة.")
+        col_size.selectbox("لكل صفحة", _PAGE_SIZES, index=_PAGE_SIZES.index(_DEFAULT_PAGE_SIZE), key="cand_page_size")
+        col_page.number_input("الصفحة", min_value=1, max_value=pages, step=1, key="cand_page")
+
+    if drawer_area is not None:
+        with drawer_area:
+            st.button("✖ إغلاق البطاقة", on_click=_close_drawer, key="cand_close_drawer")
+            with st.container(height=_DRAWER_HEIGHT, border=True):
+                candidate_profile.render_drawer(selected_id, summary.get(selected_id))
