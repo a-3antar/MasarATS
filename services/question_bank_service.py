@@ -51,19 +51,7 @@ class QuestionBankService:
 
     def as_text(self, job_id: int) -> str:
         """اسم مستعار لـ questions_as_text (للتوافق مع استدعاءات موجودة باسم مختلف)."""
-        return self.questions_as_text(job_id)
-
-    def add_questions_from_text(self, job_id: int, raw_text: str) -> list[JobQuestion]:
-        """يضيف عدة أسئلة دفعة واحدة من نص حر (مفصولة بسطر جديد أو علامة استفهام)."""
-        texts = split_questions(raw_text)
-        if not texts:
-            raise ValidationError("لم يتم إدخال أي سؤال صالح.")
-        created = []
-        for text in texts:
-            question = JobQuestion(job_id=job_id, question=text, source="manual")
-            self._questions.add(question)
-            created.append(question)
-        return created
+        return "\n".join(q.question for q in self.list_for_job(job_id))
 
     def add_question(
         self, job_id: int, text: str, *, question_type: str = "text", options: list[str] | None = None,

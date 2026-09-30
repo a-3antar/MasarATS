@@ -123,6 +123,7 @@ class CandidateService:
             phone=profile.phone,
             linkedin_url=profile.linkedin_url,
             location=profile.location,
+            birth_date=profile.birth_date,
             age=calculate_age(profile.birth_date) or profile.age,
             photo_path=self._save_photo(photo[0], file_hash[:16]) if photo else None,
             marital_status=profile.marital_status,

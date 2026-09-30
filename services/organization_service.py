@@ -129,9 +129,6 @@ class OrganizationService:
     def list_positions(self) -> list[Position]:
         return self._positions.list_all()
 
-    def get_position(self, position_id: int) -> Position | None:
-        return self._positions.get_by_id(position_id)
-
     def workforce_gaps(self) -> list[Position]:
         """المسميات التي بها نقص فعلي (required > current)، الأكبر فجوة أولاً."""
         return sorted((p for p in self._positions.list_all() if p.gap > 0), key=lambda p: p.gap, reverse=True)
