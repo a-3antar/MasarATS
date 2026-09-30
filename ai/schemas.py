@@ -68,6 +68,8 @@ class CandidateProfile(BaseModel):
     age: int | None = None
     current_position: str | None = None
     total_experience_years: float | None = None
+    birth_date: str | None = None   # كما هو مكتوب: "Sep 1987" أو "15/03/1987"
+    age: int | None = None          # يُستخدم فقط إن كُتب العمر صراحة
 
     # الحالة الشخصية
     marital_status: str | None = None

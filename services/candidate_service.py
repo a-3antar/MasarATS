@@ -37,6 +37,8 @@ from concurrent.futures import ThreadPoolExecutor
 import time 
 from datetime import datetime, timezone
 from ai.retry import call_with_retry
+from services.age_calculator import calculate_age
+
 
 logger = get_logger(__name__)
 
@@ -121,7 +123,7 @@ class CandidateService:
             phone=profile.phone,
             linkedin_url=profile.linkedin_url,
             location=profile.location,
-            age=profile.age,
+            age=calculate_age(profile.birth_date) or profile.age,
             photo_path=self._save_photo(photo[0], file_hash[:16]) if photo else None,
             marital_status=profile.marital_status,
             military_status=profile.military_status,
