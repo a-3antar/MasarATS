@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Float, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.constants import DEFAULT_MATCH_WEIGHTS, JOB_STATUSES
@@ -21,8 +21,13 @@ class Job(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
     title: Mapped[str] = mapped_column(String(150), nullable=False)
+    # نص القسم يبقى للتوافق (تقارير/تصدير) ويُزامَن من JobService مع اسم القسم المرتبط
     department: Mapped[str | None] = mapped_column(String(100), nullable=True)
     location: Mapped[str | None] = mapped_column(String(150), nullable=True)
+
+    # ربط الوظيفة بالهيكل التنظيمي (المرحلة 4)
+    department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True, index=True)
+    position_id: Mapped[int | None] = mapped_column(ForeignKey("positions.id"), nullable=True, index=True)
 
     # بيانات وصفية للوظيفة - كلها nullable لأنها أُضيفت لاحقاً (الوظائف القديمة تحمل NULL)
     employment_type: Mapped[str | None] = mapped_column(String(30), nullable=True)

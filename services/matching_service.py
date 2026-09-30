@@ -41,6 +41,15 @@ class MatchingService:
         results.sort(key=lambda r: r["score"], reverse=True)
         return results
 
+    def rank_candidates_for_job(self, job: Job, candidates: list[Candidate]) -> list[dict]:
+        """يرتّب المرشحين حسب مطابقتهم لوظيفة بدون حفظ أي تقديم (للعرض فقط، مثل البحث من فجوة القوى العاملة)."""
+        if hasattr(self._engine, "warm_up_candidates"):
+            self._engine.warm_up_candidates(candidates, job)
+
+        results = [{"candidate": c, **self._engine.calculate_match(c, job)} for c in candidates]
+        results.sort(key=lambda r: r["score"], reverse=True)
+        return results
+
     def match_candidate_to_all_jobs(self, candidate: Candidate, jobs: list[Job]) -> list[dict]:
         """يحسب درجة مطابقة مرشح واحد مقابل كل الوظائف المعطاة، ويحفظها كسجل application، ويرجع النتائج مرتبة."""
         if hasattr(self._engine, "warm_up_jobs"):

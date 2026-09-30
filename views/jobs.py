@@ -1,5 +1,6 @@
 """صفحة الوظائف: مؤشرات، بحث وفلاتر، جدول/بطاقات، لوحة تفاصيل، تحليل توظيف وقمع لكل وظيفة.
-الإضافة والتعديل داخل نوافذ (dialog) تحمل نموذج الوظيفة وتوليد الذكاء الاصطناعي وبنك الأسئلة."""
+الإضافة والتعديل داخل نوافذ (dialog) تحمل نموذج الوظيفة وتوليد الذكاء الاصطناعي وبنك الأسئلة.
+القسم والمسمى الوظيفي يُختاران من الهيكل التنظيمي (department_id / position_id)."""
 
 import re
 from datetime import datetime, timedelta, timezone
@@ -17,6 +18,7 @@ from models.job import Job
 from services.export_service import ExportService
 from services.job_insights_service import JobInsightsService, JobStats
 from services.job_service import JobService
+from services.organization_service import OrganizationService
 from services.question_bank_service import QuestionBankService
 from ui import job_components as ui
 
@@ -43,6 +45,7 @@ _LEVEL_LABELS = {
 }
 _DATE_FILTERS = {"كل الأوقات": None, "آخر 7 أيام": 7, "آخر 30 يوماً": 30, "آخر 90 يوماً": 90}
 _NONE_LABEL = "— غير محدد —"
+_NO_DEPARTMENT = "بدون قسم"
 
 _CACHE_TTL = 30
 _CARD_COLUMNS = 3
@@ -56,13 +59,14 @@ _AI_DRAFT_KEYS = {"title", "dept", "loc", "desc", "exp"} | {attr for _, attr in 
 
 def _invalidate_job_related_caches() -> None:
     """
-    قوائم الوظائف مخزّنة مؤقتاً في أكثر من صفحة (المطابقة، المقابلات)، ونتيجة
+    قوائم الوظائف مخزّنة مؤقتاً في أكثر من صفحة (المطابقة، المقابلات، الهيكل التنظيمي)، ونتيجة
     "الوظائف المناسبة" مخزّنة في بطاقة المرشح. يجب مسحها كلها عند أي تغيير في الوظائف
     حتى لا تظهر بيانات قديمة بعد الحفظ مباشرة.
     """
     _page_data.clear()
     _cached_insight.clear()
     _export_bytes.clear()
+    _org_options.clear()
     try:
         from views import matching as _matching
         _matching._cached_jobs.clear()
@@ -76,6 +80,11 @@ def _invalidate_job_related_caches() -> None:
     try:
         from views import candidate_profile as _profile
         _profile.clear_suitable_jobs_cache()
+    except Exception:
+        pass
+    try:
+        from views import organization as _organization
+        _organization._overview.clear()
     except Exception:
         pass
 
@@ -107,6 +116,7 @@ def _job_to_row(job: Job) -> dict:
     """نسخة بسيطة من الوظيفة (dict) قابلة للتخزين في كاش Streamlit."""
     return {
         "id": job.id, "title": job.title, "department": job.department, "location": job.location,
+        "department_id": job.department_id, "position_id": job.position_id,
         "employment_type": job.employment_type, "career_level": job.career_level,
         "reports_to": job.reports_to, "education": job.education,
         "salary_min": job.salary_min, "salary_max": job.salary_max,
@@ -130,6 +140,14 @@ def _page_data() -> dict:
 
 
 @st.cache_data(ttl=_CACHE_TTL, show_spinner=False)
+def _org_options() -> dict:
+    """أقسام ومسميات الهيكل التنظيمي لقوائم الاختيار في نموذج الوظيفة."""
+    with get_db_session() as session:
+        overview = OrganizationService(session).overview()
+    return {"departments": overview["departments"], "positions": overview["positions"]}
+
+
+@st.cache_data(ttl=_CACHE_TTL, show_spinner=False)
 def _cached_insight(job_id: int):
     with get_db_session() as session:
         return JobInsightsService(session).job_insight(job_id)
@@ -149,19 +167,34 @@ def _select_index(options: list[str], value: str | None) -> str:
     return value if value in options else ""
 
 
+def _department_id_for(name: str | None, departments: list[dict]) -> int | None:
+    """معرّف القسم الذي يطابق اسمه النص المعطى (بدون حساسية لحالة الأحرف)، أو None."""
+    needle = (name or "").strip().lower()
+    if not needle:
+        return None
+    return next((d["id"] for d in departments if d["name"].strip().lower() == needle), None)
+
+
 def _form_values_from(job: Job | None, draft: dict | None = None) -> dict:
     """
     القيم المبدئية لحقول النموذج، مفتاحها لاحقة اسم الحقل (title, dept, exp...).
     أولوية القيمة: نتيجة الذكاء الاصطناعي (إن وُجدت وغير فارغة) ثم بيانات الوظيفة الحالية ثم الفراغ.
+    "dept" و"pos" يحملان معرّف القسم والمسمى في الهيكل التنظيمي.
     """
     draft = draft or {}
+    departments = _org_options()["departments"]
 
     def pick(field: str, current, empty=""):
         return draft.get(field) or current or empty
 
+    dept_id = _department_id_for(draft.get("department"), departments)
+    if dept_id is None and job:
+        dept_id = job.department_id or _department_id_for(job.department, departments)
+
     values = {
         "title": pick("title", job.title if job else None),
-        "dept": pick("department", job.department if job else None),
+        "dept": dept_id,
+        "pos": job.position_id if job else None,
         "loc": pick("location", job.location if job else None),
         "desc": pick("description", job.description if job else None),
         "exp": float(pick("required_experience_years", job.required_experience_years if job else None, 0.0)),
@@ -221,7 +254,10 @@ def _render_ai_job_generator(key: str) -> None:
                     result = analyze_job_description(raw_description.strip())
                 draft = _form_values_from(None, result.model_dump())
                 st.session_state[f"{key}_pending_draft"] = {k: v for k, v in draft.items() if k in _AI_DRAFT_KEYS}
-                st.toast("تم التوليد — راجع الحقول وعدّلها قبل الحفظ")
+                note = ""
+                if result.department and draft["dept"] is None:
+                    note = f" — القسم المقترح «{result.department}» غير موجود في الهيكل، اختره يدوياً"
+                st.toast("تم التوليد — راجع الحقول وعدّلها قبل الحفظ" + note)
                 st.rerun(scope="fragment")
             except AIServiceError as exc:
                 st.error(str(exc))
@@ -229,10 +265,28 @@ def _render_ai_job_generator(key: str) -> None:
 
 def _job_form_fields(key: str) -> dict:
     """يرسم حقول نموذج الوظيفة ويرجع القيم المُدخلة (القيم المبدئية من session_state عبر _seed_form_state)."""
+    org = _org_options()
+    dept_names = {d["id"]: d["name"] for d in org["departments"]}
+    position_labels = {
+        p["id"]: f"{p['title']} — {p['department'] or _NO_DEPARTMENT}" for p in org["positions"]
+    }
+
     title = st.text_input("مسمى الوظيفة *", key=f"{key}_title")
+    col_dept, col_pos = st.columns(2)
+    with col_dept:
+        department_id = st.selectbox(
+            "القسم (من الهيكل التنظيمي)", [None, *dept_names], key=f"{key}_dept",
+            format_func=lambda v: dept_names.get(v, _NONE_LABEL),
+        )
+    with col_pos:
+        position_id = st.selectbox(
+            "المسمى في الهيكل التنظيمي", [None, *position_labels], key=f"{key}_pos",
+            format_func=lambda v: position_labels.get(v, _NONE_LABEL),
+        )
+    st.caption("إن اخترت مسمى بدون قسم يُؤخذ قسمه تلقائياً. أضف الأقسام والمسميات من صفحة «الهيكل التنظيمي».")
+
     col1, col2 = st.columns(2)
     with col1:
-        department = st.text_input("القسم", key=f"{key}_dept")
         employment = st.selectbox(
             "نوع التوظيف", [""] + EMPLOYMENT_TYPES, key=f"{key}_type",
             format_func=lambda v: _EMPLOYMENT_LABELS.get(v, _NONE_LABEL),
@@ -259,7 +313,8 @@ def _job_form_fields(key: str) -> dict:
 
     return {
         "title": title,
-        "department": department.strip() or None,
+        "department_id": department_id,
+        "position_id": position_id,
         "location": location.strip() or None,
         "employment_type": employment or None,
         "career_level": level or None,
@@ -594,6 +649,7 @@ def _render_insight_section(job: dict) -> None:
 
 def _render_detail_panel(job: dict, stats: dict[int, JobStats]) -> None:
     s = stats.get(job["id"], JobStats())
+    position_titles = {p["id"]: p["title"] for p in _org_options()["positions"]}
     with st.container(border=True):
         st.markdown(
             f'<div class="jb"><div class="jb-title">{job["title"]}</div>'
@@ -613,7 +669,8 @@ def _render_detail_panel(job: dict, stats: dict[int, JobStats]) -> None:
 
         st.markdown('<div class="jb jb-section">📋 معلومات الوظيفة</div>', unsafe_allow_html=True)
         st.markdown(ui.info_rows([
-            ("القسم", job["department"]), ("يتبع لـ", job["reports_to"]), ("الموقع", job["location"]),
+            ("القسم", job["department"]), ("المسمى في الهيكل", position_titles.get(job["position_id"], "-")),
+            ("يتبع لـ", job["reports_to"]), ("الموقع", job["location"]),
             ("نوع التوظيف", _EMPLOYMENT_LABELS.get(job["employment_type"], "-")),
             ("الراتب", _salary_text(job["salary_min"], job["salary_max"])),
             ("الشواغر", str(job["vacancies"])),

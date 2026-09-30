@@ -1,20 +1,101 @@
-"""خدمة الهيكل التنظيمي: أقسام، مسميات وظيفية، ومنع الحلقات الدائرية في التبعية."""
+"""خدمة الهيكل التنظيمي: أقسام، مسميات وظيفية، منع الحلقات الدائرية، وربط الهيكل بالوظائف."""
 
+from collections import Counter
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from core.constants import JOB_STATUSES
 from core.exceptions import ValidationError
 from models.department import Department
+from models.job import Job
 from models.position import Position
 from repositories.organization_repository import DepartmentRepository, PositionRepository
 
 _DEPT_EDITABLE = {"name", "parent_department_id"}
 _POS_EDITABLE = {"title", "department_id", "reports_to_position_id", "required_headcount", "current_headcount"}
+_CLOSED = JOB_STATUSES[3]
 
 
 class OrganizationService:
     def __init__(self, session: Session) -> None:
+        self._session = session
         self._departments = DepartmentRepository(session)
         self._positions = PositionRepository(session)
+
+    # ------------------------------------------------------------ نظرة شاملة للواجهة
+
+    def overview(self) -> dict:
+        """
+        كل بيانات صفحة الهيكل كقواميس بسيطة قابلة للتخزين في كاش Streamlit:
+        الأقسام والمسميات (مع الوظائف المرتبطة بكل مسمى) والمؤشرات.
+        """
+        departments = self._departments.list_all()
+        positions = self._positions.list_all()
+        dept_names = {d.id: d.name for d in departments}
+        titles = {p.id: p.title for p in positions}
+
+        jobs_by_position: dict[int, list[dict]] = {}
+        jobs_by_department: Counter[int] = Counter()
+        for job in self._session.scalars(select(Job)):
+            if job.department_id is not None:
+                jobs_by_department[job.department_id] += 1
+            if job.position_id is not None:
+                jobs_by_position.setdefault(job.position_id, []).append({
+                    "id": job.id,
+                    "title": job.title,
+                    "status": job.status,
+                    "has_requirements": bool(job.all_required_skills or job.required_experience_years),
+                })
+        positions_per_department = Counter(p.department_id for p in positions if p.department_id is not None)
+
+        position_rows = []
+        for p in positions:
+            linked = jobs_by_position.get(p.id, [])
+            position_rows.append({
+                "id": p.id,
+                "title": p.title,
+                "department_id": p.department_id,
+                "department": dept_names.get(p.department_id),
+                "reports_to_id": p.reports_to_position_id,
+                "reports_to": titles.get(p.reports_to_position_id),
+                "required": p.required_headcount,
+                "current": p.current_headcount,
+                "gap": p.gap,
+                "jobs": linked,
+                "active_jobs": sum(1 for j in linked if j["status"] != _CLOSED),
+            })
+
+        return {
+            "departments": [
+                {
+                    "id": d.id,
+                    "name": d.name,
+                    "parent_id": d.parent_department_id,
+                    "positions": positions_per_department.get(d.id, 0),
+                    "jobs": jobs_by_department.get(d.id, 0),
+                }
+                for d in departments
+            ],
+            "positions": position_rows,
+            "kpis": {
+                "departments": len(departments),
+                "positions": len(positions),
+                "total_gap": sum(max(p.gap, 0) for p in positions),
+                "linked_jobs": sum(r["active_jobs"] for r in position_rows),
+            },
+        }
+
+    # ------------------------------------------------------------ مزامنة الوظائف
+
+    def _sync_job_departments(self, where_clause, department: Department | None) -> None:
+        """يحدّث قسم (id + النص) الوظائف المطابقة للشرط ليبقى متسقاً مع الهيكل."""
+        for job in self._session.scalars(select(Job).where(where_clause)):
+            job.department_id = department.id if department else None
+            job.department = department.name if department else None
+
+    def _count_jobs(self, where_clause) -> int:
+        return self._session.scalar(select(func.count()).select_from(Job).where(where_clause)) or 0
 
     # ------------------------------------------------------------ الأقسام
 
@@ -43,6 +124,8 @@ class OrganizationService:
 
         for name, value in fields.items():
             setattr(department, name, value.strip() if name == "name" else value)
+        if "name" in fields:  # الوظائف المرتبطة تحمل نسخة نصية من اسم القسم
+            self._sync_job_departments(Job.department_id == department_id, department)
         return department
 
     def delete_department(self, department_id: int) -> None:
@@ -51,6 +134,8 @@ class OrganizationService:
             raise ValidationError("لا يمكن حذف قسم يحتوي على مسميات وظيفية. انقلها أو احذفها أولاً.")
         if any(d.parent_department_id == department_id for d in self._departments.list_all()):
             raise ValidationError("لا يمكن حذف قسم له أقسام فرعية. انقلها أو احذفها أولاً.")
+        if self._count_jobs(Job.department_id == department_id):
+            raise ValidationError("لا يمكن حذف قسم مرتبط بوظائف. غيّر قسم هذه الوظائف أولاً.")
         self._departments.delete(self._departments.get_by_id(department_id))
 
     def _would_cycle(self, department_id: int, new_parent_id: int) -> bool:
@@ -101,6 +186,10 @@ class OrganizationService:
         self._validate_position_fields(fields)
         for name, value in fields.items():
             setattr(position, name, value.strip() if name == "title" else value)
+        if "department_id" in fields:  # الوظائف المرتبطة بالمسمى تنتقل مع قسمه
+            department_id = fields["department_id"]
+            department = self._departments.get_by_id(department_id) if department_id is not None else None
+            self._sync_job_departments(Job.position_id == position_id, department)
         return position
 
     def _validate_position_fields(self, fields: dict) -> None:
@@ -118,6 +207,8 @@ class OrganizationService:
         self._get_position_or_raise(position_id)
         if any(p.reports_to_position_id == position_id for p in self._positions.list_all()):
             raise ValidationError("لا يمكن حذف مسمى يتبعه مسميات أخرى. عدّل تبعيتها أولاً.")
+        if self._count_jobs(Job.position_id == position_id):
+            raise ValidationError("لا يمكن حذف مسمى مرتبط بوظائف. فُكّ ارتباط هذه الوظائف به أولاً.")
         self._positions.delete(self._positions.get_by_id(position_id))
 
     def _get_position_or_raise(self, position_id: int) -> Position:
@@ -128,6 +219,9 @@ class OrganizationService:
 
     def list_positions(self) -> list[Position]:
         return self._positions.list_all()
+
+    def get_position(self, position_id: int) -> Position | None:
+        return self._positions.get_by_id(position_id)
 
     def workforce_gaps(self) -> list[Position]:
         """المسميات التي بها نقص فعلي (required > current)، الأكبر فجوة أولاً."""

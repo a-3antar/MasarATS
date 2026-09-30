@@ -1,278 +1,474 @@
-"""صفحة الهيكل التنظيمي: أقسام، مسميات وظيفية، شجرة العرض، وفجوة القوى العاملة."""
+"""صفحة الهيكل التنظيمي بنفس تصميم صفحتي الوظائف والمرشحين: مؤشرات + بحث وفلاتر + جدول مع لوحة تفاصيل + بطاقات.
+ربط الهيكل بالوظائف: من فجوة القوى العاملة تُنشأ وظيفة مسودة (طلب توظيف) ويُبحث عن مرشحين بمحرك المطابقة نفسه."""
 
+import html
+
+import pandas as pd
 import streamlit as st
 
+from core.constants import SEARCH_MAX_CANDIDATES
 from core.exceptions import SmartATSError
 from database.database import get_db_session
 from services.candidate_service import CandidateService
+from services.job_service import JobService
+from services.matching_service import MatchingService
 from services.organization_service import OrganizationService
+from ui import job_components as jobs_ui
+from ui import org_components as ui
 
-_LIST_CACHE_TTL = 30
+_CACHE_TTL = 30
+_CARD_COLUMNS = 3
+_TOP_CANDIDATES = 10
+_SELECTED_POS_KEY = "org_selected_position"
+_SEARCH_KEY = "org_candidate_search"
+_NONE_DEPT = "— بدون قسم —"
+_NONE_BOSS = "— لا يتبع أحداً —"
+_CLOSED = "Closed"
+_FULL_PCT = 100
+
+_NAV_KEY, _JOBS_PAGE, _MATCHING_PAGE = "nav_page", "💼 الوظائف", "🎯 المطابقة"
+_JOBS_SELECTED_KEY, _MATCHING_JOB_KEY = "jobs_selected_id", "m_job_select"
+_JOB_STATUS_LABELS = {"Draft": "مسودة", "Open": "مفتوحة", "On Hold": "معلّقة", "Closed": "مغلقة"}
 
 
-@st.cache_data(ttl=_LIST_CACHE_TTL, show_spinner=False)
-def _cached_departments() -> list:
+# ------------------------------------------------------------ بيانات وكاش
+
+@st.cache_data(ttl=_CACHE_TTL, show_spinner=False)
+def _overview() -> dict:
     with get_db_session() as session:
-        return OrganizationService(session).list_departments()
+        return OrganizationService(session).overview()
 
 
-@st.cache_data(ttl=_LIST_CACHE_TTL, show_spinner=False)
-def _cached_positions() -> list:
-    with get_db_session() as session:
-        return OrganizationService(session).list_positions()
+def _invalidate() -> None:
+    """مسح كاش الهيكل وكاش الوظائف (الهيكل مرتبط بالوظائف فيتأثر الاثنان)."""
+    _overview.clear()
+    try:
+        from views import jobs as _jobs
+        _jobs._invalidate_job_related_caches()
+    except Exception:  # noqa: BLE001
+        pass
 
 
-def _invalidate_caches() -> None:
-    _cached_departments.clear()
-    _cached_positions.clear()
+def _run(action, success: str) -> bool:
+    """ينفّذ عملية على الخدمات داخل جلسة، ويعرض الخطأ للمستخدم. يعيد تشغيل الصفحة عند النجاح."""
+    try:
+        with get_db_session() as session:
+            action(session)
+    except SmartATSError as exc:
+        st.error(str(exc))
+        return False
+    _invalidate()
+    st.toast(success)
+    st.rerun()
+    return True
 
 
-# ------------------------------------------------------------ الأقسام
+def _go_to_jobs(job_id: int) -> None:
+    st.session_state[_NAV_KEY] = _JOBS_PAGE
+    st.session_state[_JOBS_SELECTED_KEY] = job_id
 
-def _render_departments_tab() -> None:
-    departments = _cached_departments()
-    dept_labels = {"— بدون قسم أب —": None} | {f"{d.name} (#{d.id})": d.id for d in departments}
 
-    with st.expander("➕ إضافة قسم جديد"):
-        with st.form("new_department_form", clear_on_submit=True):
-            name = st.text_input("اسم القسم *")
-            parent_label = st.selectbox("القسم الأب", list(dept_labels.keys()), key="new_dept_parent")
-            submitted = st.form_submit_button("حفظ", type="primary")
-        if submitted:
-            try:
-                with get_db_session() as session:
-                    OrganizationService(session).create_department(name, dept_labels[parent_label])
-                _invalidate_caches()
-                st.toast("تمت إضافة القسم ✅")
-                st.rerun()
-            except SmartATSError as exc:
-                st.error(str(exc))
+def _go_to_matching(job_id: int, title: str) -> None:
+    st.session_state[_NAV_KEY] = _MATCHING_PAGE
+    st.session_state[_MATCHING_JOB_KEY] = f"{title} (#{job_id})"
 
-    if not departments:
-        st.info("لا توجد أقسام بعد.")
+
+def _clean_line(text: str) -> str:
+    return text.lstrip("✓✔⚠❌\ufe0f ").strip()
+
+
+def _index_of(options: dict, value) -> int:
+    return next((i for i, v in enumerate(options.values()) if v == value), 0)
+
+
+def _dept_options(overview: dict) -> dict[str, int | None]:
+    return {_NONE_DEPT: None} | {f"{d['name']} (#{d['id']})": d["id"] for d in overview["departments"]}
+
+
+def _position_options(overview: dict, exclude_id: int | None = None) -> dict[str, int | None]:
+    return {_NONE_BOSS: None} | {
+        f"{p['title']} (#{p['id']})": p["id"] for p in overview["positions"] if p["id"] != exclude_id
+    }
+
+
+# ------------------------------------------------------------ نوافذ الأقسام
+
+@st.dialog("➕ إضافة قسم جديد")
+def _create_department_dialog() -> None:
+    parents = _dept_options(_overview())
+    with st.form("new_department_form"):
+        name = st.text_input("اسم القسم *")
+        parent = st.selectbox("القسم الأب", list(parents), key="new_dept_parent")
+        submitted = st.form_submit_button("حفظ", type="primary")
+    if submitted:
+        _run(lambda s: OrganizationService(s).create_department(name, parents[parent]), "تمت إضافة القسم ✅")
+
+
+@st.dialog("✏️ تعديل القسم")
+def _edit_department_dialog(dept_id: int) -> None:
+    overview = _overview()
+    dept = next((d for d in overview["departments"] if d["id"] == dept_id), None)
+    if dept is None:
+        st.warning("القسم غير موجود.")
+        return
+    parents = {label: value for label, value in _dept_options(overview).items() if value != dept_id}
+    labels = list(parents)
+    with st.form(f"edit_dept_{dept_id}"):
+        name = st.text_input("الاسم", value=dept["name"])
+        parent = st.selectbox("القسم الأب", labels, index=_index_of(parents, dept["parent_id"]))
+        saved = st.form_submit_button("💾 حفظ", type="primary")
+    if saved:
+        _run(
+            lambda s: OrganizationService(s).update_department(
+                dept_id, name=name, parent_department_id=parents[parent]
+            ),
+            "تم الحفظ ✅",
+        )
+    st.divider()
+    confirm = st.checkbox("تأكيد حذف هذا القسم", key=f"confirm_del_dept_{dept_id}")
+    if st.button("🗑️ حذف القسم", disabled=not confirm, key=f"del_dept_{dept_id}"):
+        _run(lambda s: OrganizationService(s).delete_department(dept_id), "تم حذف القسم 🗑️")
+
+
+# ------------------------------------------------------------ نوافذ المسميات الوظيفية
+
+def _position_form_fields(key: str, overview: dict, pos: dict | None) -> dict:
+    depts = _dept_options(overview)
+    bosses = _position_options(overview, pos["id"] if pos else None)
+    title = st.text_input("المسمى الوظيفي *", value=pos["title"] if pos else "", key=f"{key}_title")
+    dept_label = st.selectbox(
+        "القسم", list(depts), index=_index_of(depts, pos["department_id"] if pos else None), key=f"{key}_dept"
+    )
+    boss_label = st.selectbox(
+        "يتبع (Reports To)", list(bosses), index=_index_of(bosses, pos["reports_to_id"] if pos else None),
+        key=f"{key}_boss",
+    )
+    col_required, col_current = st.columns(2)
+    required = col_required.number_input(
+        "العدد المطلوب", min_value=0, step=1, value=pos["required"] if pos else 1, key=f"{key}_req"
+    )
+    current = col_current.number_input(
+        "العدد الحالي", min_value=0, step=1, value=pos["current"] if pos else 0, key=f"{key}_cur"
+    )
+    return {
+        "title": title,
+        "department_id": depts[dept_label],
+        "reports_to_position_id": bosses[boss_label],
+        "required_headcount": int(required),
+        "current_headcount": int(current),
+    }
+
+
+@st.dialog("➕ إضافة مسمى وظيفي", width="large")
+def _create_position_dialog() -> None:
+    overview = _overview()
+    with st.form("new_position_form"):
+        values = _position_form_fields("new_pos", overview, None)
+        submitted = st.form_submit_button("حفظ", type="primary")
+    if submitted:
+        title = values.pop("title")
+        _run(lambda s: OrganizationService(s).create_position(title, **values), "تمت إضافة المسمى الوظيفي ✅")
+
+
+@st.dialog("✏️ تعديل المسمى الوظيفي", width="large")
+def _edit_position_dialog(position_id: int) -> None:
+    overview = _overview()
+    pos = next((p for p in overview["positions"] if p["id"] == position_id), None)
+    if pos is None:
+        st.warning("المسمى الوظيفي غير موجود.")
+        return
+    with st.form(f"edit_pos_form_{position_id}"):
+        values = _position_form_fields(f"edit_pos_{position_id}", overview, pos)
+        saved = st.form_submit_button("💾 حفظ", type="primary")
+    if saved:
+        _run(lambda s: OrganizationService(s).update_position(position_id, **values), "تم الحفظ ✅")
+    st.divider()
+    confirm = st.checkbox("تأكيد حذف هذا المسمى", key=f"confirm_del_pos_{position_id}")
+    if st.button("🗑️ حذف المسمى", disabled=not confirm, key=f"del_pos_{position_id}"):
+        _run(lambda s: OrganizationService(s).delete_position(position_id), "تم الحذف 🗑️")
+
+
+# ------------------------------------------------------------ ربط الهيكل بالوظائف والبحث عن مرشحين
+
+def _create_job_for_position(position_id: int) -> None:
+    """ينشئ وظيفة مسودة من المسمى (شواغرها = الفجوة) لتكمل متطلباتها من صفحة الوظائف."""
+    try:
+        with get_db_session() as session:
+            JobService(session).create_from_position(position_id)
+    except SmartATSError as exc:
+        st.error(str(exc))
+        return
+    _invalidate()
+    st.toast("تم إنشاء وظيفة مسودة — أكمل متطلباتها (المهارات والخبرة) من صفحة الوظائف ✅")
+    st.rerun()
+
+
+def _run_search(job_id: int) -> None:
+    try:
+        with st.spinner("جاري مطابقة المرشحين..."):
+            with get_db_session() as session:
+                job = JobService(session).get_by_id(job_id)
+                candidates = CandidateService(session).list_all(limit=SEARCH_MAX_CANDIDATES)
+                ranked = MatchingService(session).rank_candidates_for_job(job, candidates) if job and candidates else []
+                results = [
+                    {
+                        "name": r["candidate"].full_name,
+                        "position": r["candidate"].current_position or "-",
+                        "score": r["score"],
+                        "strengths": [_clean_line(s) for s in r["strengths"]],
+                        "gaps": [_clean_line(g) for g in r["gaps"]],
+                    }
+                    for r in ranked[:_TOP_CANDIDATES]
+                ]
+    except SmartATSError as exc:
+        st.error(str(exc))
+        return
+    st.session_state[_SEARCH_KEY] = {"job_id": job_id, "results": results}
+
+
+def _render_candidate_search(pos: dict, prefix: str) -> None:
+    """بحث مرشحين لسد فجوة مسمى: يعمل على وظيفة نشطة مرتبطة به (وإلا يعرض إنشاءها)."""
+    active = [j for j in pos["jobs"] if j["status"] != _CLOSED]
+    if not active:
+        st.info("لا توجد وظيفة نشطة مرتبطة بهذا المسمى. أنشئ وظيفة من الفجوة ثم أكمل متطلباتها.")
+        if st.button("➕ إنشاء وظيفة من الفجوة", key=f"{prefix}_mk_{pos['id']}", width="stretch"):
+            _create_job_for_position(pos["id"])
         return
 
-    for dept in departments:
-        with st.expander(f"🏢 {dept.name} (#{dept.id})"):
-            with st.form(f"edit_dept_{dept.id}"):
-                new_name = st.text_input("الاسم", value=dept.name, key=f"dept_name_{dept.id}")
-                options = [l for l, i in dept_labels.items() if i != dept.id]
-                current_label = next((l for l, i in dept_labels.items() if i == dept.parent_department_id), options[0])
-                new_parent_label = st.selectbox(
-                    "القسم الأب", options, index=options.index(current_label), key=f"dept_parent_{dept.id}"
-                )
-                saved = st.form_submit_button("💾 حفظ", type="primary")
-            if saved:
-                try:
-                    with get_db_session() as session:
-                        OrganizationService(session).update_department(
-                            dept.id, name=new_name, parent_department_id=dept_labels[new_parent_label]
-                        )
-                    _invalidate_caches()
-                    st.toast("تم الحفظ ✅")
-                    st.rerun()
-                except SmartATSError as exc:
-                    st.error(str(exc))
+    labels = {f"{j['title']} (#{j['id']})": j for j in active}
+    job = labels[st.selectbox("الوظيفة المرتبطة", list(labels), key=f"{prefix}_job_{pos['id']}")]
 
-            st.divider()
-            confirm = st.checkbox("تأكيد حذف هذا القسم", key=f"confirm_del_dept_{dept.id}")
-            if st.button("🗑️ حذف القسم", disabled=not confirm, key=f"del_dept_{dept.id}"):
-                try:
-                    with get_db_session() as session:
-                        OrganizationService(session).delete_department(dept.id)
-                    _invalidate_caches()
-                    st.toast("تم حذف القسم 🗑️")
-                    st.rerun()
-                except SmartATSError as exc:
-                    st.error(str(exc))
-
-
-# -------------------------------------------------------- المسميات الوظيفية
-
-def _render_positions_tab() -> None:
-    departments = _cached_departments()
-    positions = _cached_positions()
-    dept_labels = {"— بدون قسم —": None} | {f"{d.name} (#{d.id})": d.id for d in departments}
-    pos_labels_base = {p.id: f"{p.title} (#{p.id})" for p in positions}
-
-    with st.expander("➕ إضافة مسمى وظيفي جديد"):
-        with st.form("new_position_form", clear_on_submit=True):
-            title = st.text_input("المسمى الوظيفي *")
-            dept_label = st.selectbox("القسم", list(dept_labels.keys()), key="new_pos_dept")
-            reports_options = {"— لا يتبع أحداً —": None} | {v: k for k, v in pos_labels_base.items()}
-            reports_label = st.selectbox("يتبع (Reports To)", list(reports_options.keys()), key="new_pos_reports")
-            col1, col2 = st.columns(2)
-            with col1:
-                required = st.number_input("العدد المطلوب", min_value=0, step=1, value=1, key="new_pos_required")
-            with col2:
-                current = st.number_input("العدد الحالي", min_value=0, step=1, value=0, key="new_pos_current")
-            submitted = st.form_submit_button("حفظ", type="primary")
-        if submitted:
-            try:
-                with get_db_session() as session:
-                    OrganizationService(session).create_position(
-                        title,
-                        department_id=dept_labels[dept_label],
-                        reports_to_position_id=reports_options[reports_label],
-                        required_headcount=int(required),
-                        current_headcount=int(current),
-                    )
-                _invalidate_caches()
-                st.toast("تمت إضافة المسمى الوظيفي ✅")
-                st.rerun()
-            except SmartATSError as exc:
-                st.error(str(exc))
-
-    if not positions:
-        st.info("لا توجد مسميات وظيفية بعد.")
+    if not job["has_requirements"]:
+        st.warning("هذه الوظيفة بلا متطلبات (مهارات/خبرة)، فستكون نتائج المطابقة غير ذات معنى. أكمل المتطلبات أولاً.")
+        st.button(
+            "✏️ أكمل المتطلبات في صفحة الوظائف", key=f"{prefix}_req_{pos['id']}", width="stretch",
+            on_click=_go_to_jobs, args=(job["id"],),
+        )
         return
 
-    for pos in positions:
-        gap_badge = f" · فجوة: {pos.gap}" if pos.gap > 0 else ""
-        with st.expander(f"🧑‍💼 {pos.title} (#{pos.id}){gap_badge}"):
-            with st.form(f"edit_pos_{pos.id}"):
-                new_title = st.text_input("المسمى", value=pos.title, key=f"pos_title_{pos.id}")
-                dept_options = list(dept_labels.keys())
-                cur_dept_label = next((l for l, i in dept_labels.items() if i == pos.department_id), dept_options[0])
-                new_dept_label = st.selectbox(
-                    "القسم", dept_options, index=dept_options.index(cur_dept_label), key=f"pos_dept_{pos.id}"
-                )
-                reports_options = {"— لا يتبع أحداً —": None} | {
-                    v: k for k, v in pos_labels_base.items() if k != pos.id
-                }
-                reports_opt_keys = list(reports_options.keys())
-                cur_reports_label = next(
-                    (l for l, i in reports_options.items() if i == pos.reports_to_position_id), reports_opt_keys[0]
-                )
-                new_reports_label = st.selectbox(
-                    "يتبع (Reports To)", reports_opt_keys, index=reports_opt_keys.index(cur_reports_label),
-                    key=f"pos_reports_{pos.id}",
-                )
-                col1, col2 = st.columns(2)
-                with col1:
-                    new_required = st.number_input(
-                        "العدد المطلوب", min_value=0, step=1, value=pos.required_headcount, key=f"pos_req_{pos.id}"
-                    )
-                with col2:
-                    new_current = st.number_input(
-                        "العدد الحالي", min_value=0, step=1, value=pos.current_headcount, key=f"pos_cur_{pos.id}"
-                    )
-                saved = st.form_submit_button("💾 حفظ", type="primary")
-            if saved:
-                try:
-                    with get_db_session() as session:
-                        OrganizationService(session).update_position(
-                            pos.id,
-                            title=new_title,
-                            department_id=dept_labels[new_dept_label],
-                            reports_to_position_id=reports_options[new_reports_label],
-                            required_headcount=int(new_required),
-                            current_headcount=int(new_current),
-                        )
-                    _invalidate_caches()
-                    st.toast("تم الحفظ ✅")
-                    st.rerun()
-                except SmartATSError as exc:
-                    st.error(str(exc))
+    if st.button("🔍 ابحث عن مرشحين مناسبين", key=f"{prefix}_find_{pos['id']}", type="primary", width="stretch"):
+        _run_search(job["id"])
 
-            st.divider()
-            confirm = st.checkbox("تأكيد حذف هذا المسمى", key=f"confirm_del_pos_{pos.id}")
-            if st.button("🗑️ حذف المسمى", disabled=not confirm, key=f"del_pos_{pos.id}"):
-                try:
-                    with get_db_session() as session:
-                        OrganizationService(session).delete_position(pos.id)
-                    _invalidate_caches()
-                    st.toast("تم الحذف 🗑️")
-                    st.rerun()
-                except SmartATSError as exc:
-                    st.error(str(exc))
-
-
-# ------------------------------------------------------------ الشجرة التنظيمية
-
-def _render_chart_tab() -> None:
-    departments = _cached_departments()
-    positions = _cached_positions()
-
-    if not departments and not positions:
-        st.info("أضف أقساماً ومسميات وظيفية أولاً لعرض الهيكل التنظيمي.")
+    state = st.session_state.get(_SEARCH_KEY)
+    if not state or state["job_id"] != job["id"]:
+        return
+    if not state["results"]:
+        st.info("لا يوجد مرشحون في قاعدة البيانات لمطابقتهم.")
         return
 
-    dept_children: dict[int | None, list] = {}
-    for d in departments:
-        dept_children.setdefault(d.parent_department_id, []).append(d)
-    positions_by_dept: dict[int | None, list] = {}
-    for p in positions:
-        positions_by_dept.setdefault(p.department_id, []).append(p)
-    positions_by_reports: dict[int | None, list] = {}
-    for p in positions:
-        positions_by_reports.setdefault(p.reports_to_position_id, []).append(p)
-
-    def render_position(pos, depth: int) -> None:
-        gap_note = f" — فجوة: {pos.gap}" if pos.gap > 0 else ""
-        st.markdown("&nbsp;" * (depth * 4) + f"👤 **{pos.title}** ({pos.current_headcount}/{pos.required_headcount}){gap_note}")
-        for child in positions_by_reports.get(pos.id, []):
-            render_position(child, depth + 1)
-
-    def render_department(dept, depth: int) -> None:
-        st.markdown("&nbsp;" * (depth * 4) + f"🏢 **{dept.name}**")
-        for pos in positions_by_dept.get(dept.id, []):
-            if pos.reports_to_position_id is None:  # الجذور فقط هنا؛ التابعون يُرسمون recursively داخل render_position
-                render_position(pos, depth + 1)
-        for child_dept in dept_children.get(dept.id, []):
-            render_department(child_dept, depth + 1)
-
-    for root_dept in dept_children.get(None, []):
-        render_department(root_dept, 0)
-        st.divider()
-
-    orphan_positions = [p for p in positions if p.department_id is None and p.reports_to_position_id is None]
-    if orphan_positions:
-        st.markdown("**🧑‍💼 مسميات بدون قسم**")
-        for pos in orphan_positions:
-            render_position(pos, 0)
+    st.caption(f"أفضل {len(state['results'])} مرشحين — الدرجات للعرض فقط ولا تُحفظ كتقديمات.")
+    for r in state["results"]:
+        st.markdown(ui.score_row(r["name"], r["position"], r["score"]), unsafe_allow_html=True)
+        if r["strengths"]:
+            st.caption("✔️ " + " · ".join(r["strengths"][:3]))
+        if r["gaps"]:
+            st.caption("⚠️ " + " · ".join(r["gaps"][:2]))
+    st.button(
+        "🎯 افتح المطابقة الكاملة لهذه الوظيفة", key=f"{prefix}_match_{pos['id']}", width="stretch",
+        on_click=_go_to_matching, args=(job["id"], job["title"]),
+    )
 
 
-# ------------------------------------------------------------ فجوة القوى العاملة
+# ------------------------------------------------------------ المؤشرات والفلاتر
 
-def _render_gap_tab() -> None:
-    with get_db_session() as session:
-        gaps = OrganizationService(session).workforce_gaps()
+def _render_kpis(k: dict) -> None:
+    cards = [
+        ("🏢", "الأقسام", k["departments"], "في الهيكل التنظيمي", "muted"),
+        ("🧑‍💼", "المسميات الوظيفية", k["positions"], "مسمى مسجّل", "muted"),
+        ("⚠️", "إجمالي الفجوة", k["total_gap"], "شواغر مطلوب تعبئتها", "down" if k["total_gap"] else "up"),
+        ("💼", "وظائف مرتبطة بالهيكل", k["linked_jobs"], "وظائف نشطة مرتبطة بمسمى", "up" if k["linked_jobs"] else "muted"),
+    ]
+    for col, (icon, label, value, sub, tone) in zip(st.columns(len(cards)), cards):
+        col.markdown(jobs_ui.kpi_card(icon, label, value, sub, tone), unsafe_allow_html=True)
 
+
+def _render_filter_bar(overview: dict) -> dict:
+    col_search, col_dept, col_gap = st.columns([3, 2, 1.3])
+    query = col_search.text_input(
+        "بحث", key="org_search_q", label_visibility="collapsed", placeholder="🔎 ابحث بالمسمى أو القسم..."
+    )
+    departments = col_dept.multiselect(
+        "القسم", [d["name"] for d in overview["departments"]], key="org_f_dept", placeholder="القسم"
+    )
+    only_gap = col_gap.toggle("ذات فجوة فقط", key="org_f_gap")
+    return {"query": query, "departments": departments, "only_gap": only_gap}
+
+
+def _filter_positions(positions: list[dict], f: dict) -> list[dict]:
+    needle = f["query"].strip().lower()
+    return [
+        p for p in positions
+        if (not needle or needle in f"{p['title']} {p['department'] or ''}".lower())
+        and (not f["departments"] or p["department"] in f["departments"])
+        and (not f["only_gap"] or p["gap"] > 0)
+    ]
+
+
+# ------------------------------------------------------------ تبويب المسميات (جدول + لوحة تفاصيل)
+
+def _render_positions_table(rows: list[dict]) -> None:
+    data = [
+        {
+            "المسمى": p["title"],
+            "القسم": p["department"] or "-",
+            "يتبع": p["reports_to"] or "-",
+            "المطلوب": p["required"],
+            "الحالي": p["current"],
+            "التغطية": round(min(p["current"] / p["required"] * _FULL_PCT, _FULL_PCT)) if p["required"] else _FULL_PCT,
+            "الفجوة": p["gap"],
+            "وظائف نشطة": p["active_jobs"],
+        }
+        for p in rows
+    ]
+    event = st.dataframe(
+        pd.DataFrame(data), width="stretch", hide_index=True,
+        on_select="rerun", selection_mode="single-row", key="org_positions_table",
+        column_config={
+            "التغطية": st.column_config.ProgressColumn("التغطية", format="%d%%", min_value=0, max_value=_FULL_PCT),
+        },
+    )
+    picked = event.selection.rows
+    if picked and picked[0] < len(rows):
+        st.session_state[_SELECTED_POS_KEY] = rows[picked[0]]["id"]
+
+
+def _render_position_panel(pos: dict) -> None:
+    with st.container(border=True):
+        st.markdown(
+            f'<div class="jb"><div class="jb-title">{html.escape(pos["title"])}</div>{ui.gap_badge(pos["gap"])}</div>',
+            unsafe_allow_html=True,
+        )
+        col_edit, col_job = st.columns(2)
+        with col_edit:
+            if st.button("✏️ تعديل", key=f"org_edit_pos_{pos['id']}", type="primary", width="stretch"):
+                _edit_position_dialog(pos["id"])
+        with col_job:
+            if st.button("➕ وظيفة من الفجوة", key=f"org_mkjob_{pos['id']}", width="stretch"):
+                _create_job_for_position(pos["id"])
+
+        st.markdown('<div class="jb jb-section">📋 معلومات المسمى</div>', unsafe_allow_html=True)
+        st.markdown(jobs_ui.info_rows([
+            ("القسم", pos["department"] or "-"), ("يتبع", pos["reports_to"] or "-"),
+            ("المطلوب", str(pos["required"])), ("الحالي", str(pos["current"])), ("الفجوة", str(pos["gap"])),
+        ]), unsafe_allow_html=True)
+        st.markdown(ui.headcount_bar(pos["current"], pos["required"]), unsafe_allow_html=True)
+
+        st.markdown('<div class="jb jb-section">💼 الوظائف المرتبطة</div>', unsafe_allow_html=True)
+        if not pos["jobs"]:
+            st.caption("لا توجد وظائف مرتبطة بهذا المسمى بعد.")
+        for job in pos["jobs"]:
+            col_info, col_open = st.columns([3, 1])
+            badge = jobs_ui.status_badge(job["status"], _JOB_STATUS_LABELS.get(job["status"], job["status"]))
+            col_info.markdown(f'{badge} {html.escape(job["title"])}', unsafe_allow_html=True)
+            col_open.button(
+                "فتح", key=f"org_open_job_{pos['id']}_{job['id']}", on_click=_go_to_jobs,
+                args=(job["id"],), width="stretch",
+            )
+
+        st.markdown('<div class="jb jb-section">🔍 مرشحون مناسبون</div>', unsafe_allow_html=True)
+        _render_candidate_search(pos, "pos")
+
+
+def _render_positions_tab(rows: list[dict]) -> None:
+    if not rows:
+        st.info("لا توجد مسميات مطابقة للبحث والفلاتر الحالية.")
+        return
+    by_id = {r["id"]: r for r in rows}
+    selected = by_id.get(st.session_state.get(_SELECTED_POS_KEY)) or rows[0]
+
+    main, side = st.columns([3, 1.15], gap="medium")
+    with main:
+        _render_positions_table(rows)
+        st.caption(f"إجمالي المسميات: {len(rows)} — اضغط على أي صف لعرض تفاصيله والبحث عن مرشحين.")
+    with side:
+        _render_position_panel(selected)
+
+
+# ------------------------------------------------------------ تبويب الفجوات
+
+def _render_gap_tab(rows: list[dict]) -> None:
+    gaps = sorted((p for p in rows if p["gap"] > 0), key=lambda p: p["gap"], reverse=True)
     if not gaps:
         st.success("لا توجد فجوات في القوى العاملة حالياً. كل المسميات مكتملة العدد.")
         return
-
     for pos in gaps:
         with st.container(border=True):
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.markdown(f"**{pos.title}**")
-                st.caption(f"مطلوب: {pos.required_headcount} · حالي: {pos.current_headcount}")
-            with col2:
-                st.metric("الفجوة", pos.gap)
+            col_info, col_bar, col_gap = st.columns([3, 3, 1])
+            col_info.markdown(
+                f'<div class="jb"><div class="jb-title">{html.escape(pos["title"])}</div>'
+                f'<div class="jb-card-meta">{html.escape(pos["department"] or "بدون قسم")} · '
+                f'💼 {pos["active_jobs"]} وظيفة نشطة</div></div>',
+                unsafe_allow_html=True,
+            )
+            col_bar.markdown(ui.headcount_bar(pos["current"], pos["required"]), unsafe_allow_html=True)
+            col_gap.metric("الفجوة", pos["gap"])
+            with st.expander("🔍 مرشحون مناسبون لهذه الفجوة"):
+                _render_candidate_search(pos, "gap")
 
-            if st.button(f"🔍 ابحث عن مرشحين لـ «{pos.title}»", key=f"find_{pos.id}"):
-                with get_db_session() as session:
-                    matches = CandidateService(session).search(pos.title)
-                if matches:
-                    for c in matches[:10]:
-                        st.write(f"👤 {c.full_name} — {c.current_position or 'بدون مسمى'} — {c.email or '-'}")
-                else:
-                    st.info("لا يوجد مرشحون مطابقون لهذا المسمى في قاعدة البيانات حالياً.")
 
+# ------------------------------------------------------------ تبويبا الشجرة والأقسام
+
+def _render_tree_tab(overview: dict) -> None:
+    if not overview["departments"] and not overview["positions"]:
+        st.info("أضف أقساماً ومسميات وظيفية أولاً لعرض الهيكل التنظيمي.")
+        return
+    st.markdown(ui.tree_html(overview["departments"], overview["positions"]), unsafe_allow_html=True)
+
+
+def _render_departments_tab(overview: dict) -> None:
+    departments = overview["departments"]
+    if not departments:
+        st.info("لا توجد أقسام بعد. اضغط «➕ قسم» للبدء.")
+        return
+    names = {d["id"]: d["name"] for d in departments}
+    columns = st.columns(_CARD_COLUMNS)
+    for index, dept in enumerate(departments):
+        with columns[index % _CARD_COLUMNS], st.container(border=True):
+            st.markdown(
+                f'<div class="jb"><div class="jb-title">{html.escape(dept["name"])}</div>'
+                f'<div class="jb-card-meta">يتبع: {html.escape(names.get(dept["parent_id"], "—"))}</div>'
+                f'<div class="jb-card-nums"><span>🧑‍💼 {dept["positions"]}</span><span>💼 {dept["jobs"]}</span></div></div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("✏️ تعديل", key=f"org_edit_dept_{dept['id']}", width="stretch"):
+                _edit_department_dialog(dept["id"])
+
+
+# ------------------------------------------------------------ الصفحة الرئيسية
 
 def render() -> None:
-    st.header("🏢 الهيكل التنظيمي")
+    ui.inject_css()
 
-    tab_depts, tab_positions, tab_chart, tab_gap = st.tabs(
-        ["🏢 الأقسام", "🧑‍💼 المسميات الوظيفية", "🌳 الشجرة التنظيمية", "⚠️ فجوة القوى العاملة"]
+    col_title, col_dept, col_pos = st.columns([4, 1, 1.4])
+    with col_title:
+        st.header("🏢 الهيكل التنظيمي")
+        st.caption("الأقسام والمسميات الوظيفية وفجوة القوى العاملة، مرتبطة بالوظائف والمطابقة")
+    with col_dept:
+        st.write("")
+        if st.button("➕ قسم", key="org_add_dept", width="stretch"):
+            _create_department_dialog()
+    with col_pos:
+        st.write("")
+        if st.button("➕ مسمى وظيفي", key="org_add_pos", type="primary", width="stretch"):
+            _create_position_dialog()
+
+    overview = _overview()
+    _render_kpis(overview["kpis"])
+
+    if not overview["departments"] and not overview["positions"]:
+        st.info("ابدأ بإضافة قسم ثم مسميات وظيفية لبناء الهيكل التنظيمي.")
+        return
+
+    rows = _filter_positions(overview["positions"], _render_filter_bar(overview))
+
+    tab_positions, tab_gap, tab_tree, tab_depts = st.tabs(
+        ["🧑‍💼 المسميات الوظيفية", "⚠️ فجوة القوى العاملة", "🌳 الشجرة التنظيمية", "🏢 الأقسام"]
     )
-    with tab_depts:
-        _render_departments_tab()
     with tab_positions:
-        _render_positions_tab()
-    with tab_chart:
-        _render_chart_tab()
+        _render_positions_tab(rows)
     with tab_gap:
-        _render_gap_tab()
+        _render_gap_tab(rows)
+    with tab_tree:
+        _render_tree_tab(overview)
+    with tab_depts:
+        _render_departments_tab(overview)
