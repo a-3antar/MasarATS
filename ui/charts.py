@@ -33,3 +33,18 @@ def availability_chart(rows: list[dict], title: str = "توفر المهارات
     skills = [r["skill"] for r in rows][::-1]
     fig = go.Figure(go.Bar(x=[r["candidates_with_skill"] for r in rows][::-1], y=skills, orientation="h"))
     return _base(fig, title)
+
+def donut_chart(items: list[tuple[str, int, str]], center_text: str, title: str = "") -> go.Figure:
+    """دونات بنص في المنتصف. items = [(التسمية، القيمة، اللون)]."""
+    fig = go.Figure(go.Pie(
+        labels=[label for label, _, _ in items],
+        values=[value for _, value, _ in items],
+        marker=dict(colors=[color for _, _, color in items]),
+        hole=0.68, sort=False, textinfo="none",
+    ))
+    fig.update_layout(
+        title=title, height=220, showlegend=False,
+        margin=dict(l=0, r=0, t=30 if title else 0, b=0),
+        annotations=[dict(text=center_text, x=0.5, y=0.5, font_size=22, showarrow=False)],
+    )
+    return fig
