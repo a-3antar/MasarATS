@@ -14,7 +14,6 @@ from config.settings import get_settings
 from core.logging import get_logger
 
 
-
 logger = get_logger(__name__)
 
 
@@ -70,8 +69,8 @@ def _add_missing_columns() -> None:
 def init_db() -> None:
     """إنشاء كل الجداول المعرّفة إن لم تكن موجودة + إضافة الأعمدة الناقصة. تُستدعى عند بدء التطبيق."""
     from models import (
-        application, candidate, department, interview, interview_answer,
-        job, job_question, position, user,
+        application, application_stage_history, candidate, department, interview, interview_answer,
+        job, job_question, offer, position, user,
     )  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()

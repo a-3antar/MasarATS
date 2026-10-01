@@ -195,6 +195,7 @@ views = {
     "💼 الوظائف": "jobs",
     "🎯 المطابقة": "matching",
     "🗓️ المقابلات": "interviews",
+    "📑 العروض": "offers",
     "🏢 الهيكل التنظيمي": "organization",
     "📈 التقارير": "reports",
 }
@@ -255,6 +256,9 @@ def _authenticated_view() -> None:
     elif page_key == "reports":
         from views import reports
         reports.render()
+    elif page_key == "offers":
+        from views import offers
+        offers.render()
 
 
 def main() -> None:

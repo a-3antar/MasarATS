@@ -88,3 +88,9 @@ SKILL_GAP_COVERAGE: float = 0.25       # مهارة يوثّقها أقل من �
 JOB_TREND_WEEKS: int = 8               # أسابيع الرسم المصغّر في بطاقات المؤشرات
 JOB_NEW_DAYS: int = 30                 # "هذا الشهر"
 JOB_INSIGHT_MAX_SKILLS: int = 6
+
+# العروض والتعيين
+OFFER_STATUSES: list[str] = ["Draft", "Sent", "Accepted", "Declined", "Withdrawn"]
+ACTIVE_OFFER_STATUSES: list[str] = ["Draft", "Sent", "Accepted"]
+MIN_HIRES_FOR_TIME_STATS: int = 3   # أقل عدد تعيينات لعرض متوسط/وسيط وقت التعيين
+SECONDS_PER_DAY: int = 86_400

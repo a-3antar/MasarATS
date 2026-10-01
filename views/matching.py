@@ -193,7 +193,9 @@ def _render_match_details(r: dict) -> None:
 def _change_application_status(application_id: int, new_status: str) -> None:
     try:
         with get_db_session() as session:
-            ApplicationService(session).change_status(application_id, new_status)
+            user = (st.session_state.get("user") or {}).get("full_name")
+            ApplicationService(session).change_status(application_id, new_status, changed_by=user)
+            
 
         state = st.session_state.get(_JOB_RESULTS_KEY)
         if state:

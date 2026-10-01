@@ -19,6 +19,10 @@ from models.application import Application
 from models.candidate import Candidate
 from models.interview import Interview
 from models.job import Job
+import statistics
+from core.constants import MIN_HIRES_FOR_TIME_STATS, SECONDS_PER_DAY
+from models.application_stage_history import ApplicationStageHistory
+
 
 UNSPECIFIED_DEPARTMENT = "غير محدد"
 UNANALYZED_LEVEL = "غير محلَّل"
@@ -203,4 +207,32 @@ class ReportService:
             "interviewed": interviewed,
             "offers": reached("Offer"),
             "hired": reached("Hired"),
+        }
+
+    def time_to_hire(self, job_id: int | None = None) -> dict:
+        """
+        وقت التعيين بالأيام = (آخر انتقال إلى Hired) − (تاريخ إنشاء التقديم)، للتقديمات الحالية الحالة Hired فقط.
+        لا تُعرض الأرقام إن قلّ العدد عن MIN_HIRES_FOR_TIME_STATS (مقياس غير مستقر).
+        """
+        stmt = (
+            select(Application.created_at, func.max(ApplicationStageHistory.changed_at))
+            .join(ApplicationStageHistory, ApplicationStageHistory.application_id == Application.id)
+            .where(ApplicationStageHistory.to_status == "Hired", Application.status == "Hired")
+            .group_by(Application.id)
+        )
+        if job_id is not None:
+            stmt = stmt.where(Application.job_id == job_id)
+
+        def naive(value):  # SQLite يعيد التاريخ بدون tzinfo أحياناً
+            return value.replace(tzinfo=None) if value.tzinfo else value
+
+        days = [
+            max((naive(hired) - naive(created)).total_seconds() / SECONDS_PER_DAY, 0.0)
+            for created, hired in self._session.execute(stmt).all()
+        ]
+        enough = len(days) >= MIN_HIRES_FOR_TIME_STATS
+        return {
+            "count": len(days), "minimum": MIN_HIRES_FOR_TIME_STATS, "enough": enough,
+            "average": round(statistics.mean(days), 1) if enough else None,
+            "median": round(statistics.median(days), 1) if enough else None,
         }
