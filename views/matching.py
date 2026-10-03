@@ -64,6 +64,17 @@ _CSS = f"""
 .m-mini-head{{display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:2px}}
 .st-key-m-kanban [data-testid="stHorizontalBlock"]{{overflow-x:auto;flex-wrap:nowrap;padding-bottom:8px}}
 .st-key-m-kanban [data-testid="stColumn"]{{min-width:{_KANBAN_COLUMN_MIN_PX}px}}
+[class*="st-key-kb-row-"] [data-testid="stHorizontalBlock"]{{
+  overflow:visible !important;flex-wrap:nowrap !important;gap:.4rem !important;padding:0 !important}}
+[class*="st-key-kb-row-"] [data-testid="stColumn"]{{
+  min-width:0 !important;width:auto !important;flex:1 1 0 !important}}
+[class*="st-key-kb-row-"] button{{
+  min-height:2rem !important;padding:.15rem .4rem !important;font-size:.8rem !important}}
+/* الأعمدة المتداخلة داخل البطاقة (صف الأزرار): بدون تمرير وبدون حد أدنى للعرض */
+.st-key-m-kanban [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stHorizontalBlock"]{{
+  overflow-x:visible;flex-wrap:nowrap;padding-bottom:0}}
+.st-key-m-kanban [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stColumn"]{{
+  min-width:0;flex:1 1 0}}
 [data-testid="stVerticalBlockBorderWrapper"]{{border-radius:12px}}
 </style>
 """
@@ -209,11 +220,11 @@ def _change_application_status(application_id: int, new_status: str) -> None:
     except SmartATSError as exc:
         st.error(str(exc))
 
-
 def _render_kanban_card(r: dict, status: str) -> None:
     candidate = r["candidate"]
     application_id = r["application"].id
     idx = APPLICATION_STATUSES.index(status)
+    last = idx == len(APPLICATION_STATUSES) - 1
 
     with st.container(border=True):
         st.markdown(
@@ -225,15 +236,14 @@ def _render_kanban_card(r: dict, status: str) -> None:
         )
         _render_match_details(r)
 
-        col_back, col_fwd = st.columns(2)
-        with col_back:
-            if st.button("◀◀", key=f"kanban_back_{application_id}", disabled=idx == 0, width="stretch"):
-                _change_application_status(application_id, APPLICATION_STATUSES[idx - 1])
-        with col_fwd:
-            last = idx == len(APPLICATION_STATUSES) - 1
-            if st.button("▶▶", key=f"kanban_fwd_{application_id}", disabled=last, width="stretch"):
-                _change_application_status(application_id, APPLICATION_STATUSES[idx + 1])
-
+        with _scroll_container(f"kb-row-{application_id}"):
+            col_back, col_fwd = st.columns(2, gap="small")
+            with col_back:
+                if st.button("◀◀", key=f"kanban_back_{application_id}", disabled=idx == 0, width="stretch"):
+                    _change_application_status(application_id, APPLICATION_STATUSES[idx - 1])
+            with col_fwd:
+                if st.button("▶▶", key=f"kanban_fwd_{application_id}", disabled=last, width="stretch"):
+                    _change_application_status(application_id, APPLICATION_STATUSES[idx + 1])
 
 def _render_stage_summary(grouped: dict[str, list[dict]]) -> None:
     cards = "".join(
