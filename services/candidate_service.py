@@ -38,7 +38,7 @@ import time
 from datetime import datetime, timezone
 from ai.retry import call_with_retry
 from services.age_calculator import calculate_age
-
+from services.experience_calculator import estimate_total_years, sort_experience_newest_first
 
 logger = get_logger(__name__)
 
@@ -117,6 +117,9 @@ class CandidateService:
 
             photo, page_png = photo_future.result()
 
+        profile.experience = sort_experience_newest_first(profile.experience)
+        latest = profile.experience[0] if profile.experience else None
+        position = (latest.position if latest and latest.position else None) or profile.current_position
         candidate = Candidate(
             full_name=full_name,
             email=profile.email,
@@ -129,7 +132,7 @@ class CandidateService:
             marital_status=profile.marital_status,
             military_status=profile.military_status,
             languages=profile.languages,
-            current_position=profile.current_position,
+            current_position=position,
             total_experience_years=estimate_total_years(profile.experience) or profile.total_experience_years,
             skills=profile.skills,
             technical_skills=profile.technical_skills,
