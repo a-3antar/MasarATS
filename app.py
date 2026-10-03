@@ -1,15 +1,16 @@
 """
 SmartATS AI - نقطة الدخول الرئيسية.
 
-هذه المرحلة (Phase 0/1) تحتوي فقط على:
+تحتوي هذه الطبقة على:
 - تهيئة قاعدة البيانات
 - تسجيل الدخول / إنشاء حساب جديد (مع خيار "تذكرني")
-- صفحة رئيسية بسيطة بعد الدخول
+- الشريط الجانبي (التنقل + قائمة «＋ جديد» العامة) وتوجيه الصفحات
 
 لا تحتوي هذه الطبقة (app.py) على أي منطق أعمال أو استعلامات قاعدة بيانات
-مباشرة — كل ذلك يمر عبر services/auth_service.py كما تنص المعمارية.
+مباشرة — كل ذلك يمر عبر services/ كما تنص المعمارية.
 """
 
+import importlib
 import time
 import json
 import streamlit as st
@@ -19,6 +20,7 @@ from core.exceptions import AuthenticationError, InactiveUserError, SmartATSErro
 from core.logging import setup_logging
 from database.database import get_db_session, init_db
 from services.auth_service import REMEMBER_TOKEN_DAYS, AuthService
+from ui.navigation import NAV_KEY, OPEN_CREATE_JOB, OPEN_CREATE_OFFER, PAGES, go_to
 
 st.set_page_config(page_title="SmartATS AI", page_icon="🧩", layout="wide")
 
@@ -45,6 +47,15 @@ except ImportError:
 
 _COOKIE_AUTH = "smartats_auth"
 _PENDING_REMEMBER_KEY = "_pending_remember"
+
+# إجراءات قائمة «＋ جديد»: (النص، مفتاح الصفحة، قيم session_state). لا نعرض إلا ما هو مدعوم فعلاً.
+_NEW_ACTIONS = [
+    ("📄 رفع سيرة ذاتية", "upload_cv", {}),
+    ("👤 إضافة مرشح", "candidates", {}),
+    ("💼 إنشاء وظيفة", "jobs", {OPEN_CREATE_JOB: True}),
+    ("🗓️ جدولة مقابلة", "interviews", {}),
+    ("📨 إنشاء عرض", "offers", {OPEN_CREATE_OFFER: True}),
+]
 
 
 def _set_remember_cookie(user_id: int, token: str) -> None:
@@ -187,31 +198,12 @@ def _login_view() -> None:
                 except SmartATSError as exc:
                     st.error(str(exc))
 
-views = {
-    "🏠 الرئيسية": "home",
-    "📊 لوحة المعلومات": "dashboard",
-    "📄 رفع سيرة ذاتية": "upload_cv",
-    "👥 المرشحون": "candidates",
-    "💼 الوظائف": "jobs",
-    "🎯 المطابقة": "matching",
-    "🗓️ المقابلات": "interviews",
-    "📑 العروض": "offers",
-    "🏢 الهيكل التنظيمي": "organization",
-    "📈 التقارير": "reports",
-}
 
-def _render_home(user: dict) -> None:
-    st.title("🧩 SmartATS AI")
-    st.success(f"مرحباً {user['full_name']} 👋")
-    st.markdown(
-        """
-1. **رفع سيرة ذاتية** — ارفع ملف PDF/DOCX/TXT وسيتم إنشاء مرشح تلقائياً.
-2. **المرشحون** — تصفّح وابحث في المرشحين، أو أضف واحداً يدوياً.
-3. **الوظائف** — أضف وظيفة شاغرة مع المهارات والخبرة المطلوبة.
-4. **المطابقة** — اختر وظيفة واحصل على ترتيب المرشحين مع تفسير الدرجة.
-5. **الهيكل التنظيمي** — أقسام، مسميات وظيفية، وتحليل فجوة القوى العاملة.
-        """
-    )
+def _render_new_menu() -> None:
+    """قائمة «＋ جديد» العامة: وصول مباشر لأهم الإجراءات من أي صفحة."""
+    with st.popover("＋ جديد"):
+        for index, (label, page_key, state) in enumerate(_NEW_ACTIONS):
+            st.button(label, key=f"new_action_{index}", on_click=go_to, args=(page_key,), kwargs=state)
 
 
 def _authenticated_view() -> None:
@@ -220,45 +212,17 @@ def _authenticated_view() -> None:
     with st.sidebar:
         st.markdown(f"**{user['full_name']}**")
         st.caption(f"@{user['username']} · {user['role']}")
+        _render_new_menu()
         st.divider()
-        selected_page = st.radio("التنقل", list(views.keys()), label_visibility="collapsed", key="nav_page")
+        selected_page = st.radio("التنقل", list(PAGES.keys()), label_visibility="collapsed", key=NAV_KEY)
         st.divider()
         if st.button("تسجيل الخروج", width='stretch'):
             _clear_remember_cookie()
             st.session_state.user = None
             st.rerun()
 
-    page_key = views[selected_page]
-
-    if page_key == "home":
-        _render_home(user)
-    elif page_key == "upload_cv":
-        from views import upload_cv
-        upload_cv.render()
-    elif page_key == "candidates":
-        from views import candidates
-        candidates.render()
-    elif page_key == "jobs":
-        from views import jobs
-        jobs.render()
-    elif page_key == "matching":
-        from views import matching
-        matching.render()
-    elif page_key == "interviews":
-        from views import interviews
-        interviews.render()
-    elif page_key == "organization":
-        from views import organization
-        organization.render()
-    elif page_key == "dashboard":
-        from views import dashboard
-        dashboard.render()
-    elif page_key == "reports":
-        from views import reports
-        reports.render()
-    elif page_key == "offers":
-        from views import offers
-        offers.render()
+    # اسم الصفحة = اسم الوحدة داخل views/ وكلها تعرّف render()
+    importlib.import_module(f"views.{PAGES[selected_page]}").render()
 
 
 def main() -> None:

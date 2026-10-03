@@ -693,7 +693,8 @@ def _render_detail_panel(job: dict, stats: dict[int, JobStats]) -> None:
 
 def render() -> None:
     ui.inject_css()
-
+    if st.session_state.pop("open_create_job", False):
+        _create_dialog()
     col_title, col_create = st.columns([4, 1])
     with col_title:
         st.header("💼 الوظائف")

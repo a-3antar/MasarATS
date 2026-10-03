@@ -580,7 +580,9 @@ def _render_history_tab() -> None:
 
 def render() -> None:
     _inject_css()
-
+    # views/offers.py
+    if st.session_state.pop("open_create_offer", False):
+        _create_dialog()
     col_title, col_new = st.columns([5, 1])
     with col_title:
         st.header("📨 العروض والتعيين")
