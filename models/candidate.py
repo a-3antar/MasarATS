@@ -27,6 +27,7 @@ class Candidate(Base):
     linkedin_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     location: Mapped[str | None] = mapped_column(String(150), nullable=True)
     age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    birth_date: Mapped[str | None] = mapped_column(String(50), nullable=True)  # كما كُتب في السيرة: "Sep 1987"
     photo_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # مسار نسبي لجذر المشروع
 
     # الحالة الشخصية
