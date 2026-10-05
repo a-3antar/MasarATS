@@ -3,6 +3,7 @@
 
 import base64
 import hashlib
+import html
 import io
 from collections import Counter
 
@@ -18,6 +19,7 @@ from models.candidate import Candidate
 from services.candidate_service import CandidateService
 from services.export_service import ExportService
 from services.search_service import SearchService
+from ui import components
 from views import candidate_profile
 
 _LIST_TTL = 30                  # ثوانٍ - كاش قائمة المرشحين
@@ -30,14 +32,17 @@ _DRAWER_HEIGHT = 780
 _PAGE_SIZES = [10, 25, 50, 100]
 _DEFAULT_PAGE_SIZE = 25
 _SMART_CACHE_TTL = 3600
+_NO_NEXT_ACTION = "—"
 
 _STATUS_ICONS = {
     "New": "⚪", "Screening": "🔵", "Shortlisted": "🟢", "Interview": "🟠",
     "Offer": "🟣", "Hired": "✅", "Rejected": "🔴",
 }
 _SORT_OPTIONS = ["الأحدث", "الأعلى مطابقة", "الأكثر خبرة", "الاسم"]
+_SEARCH_MODE_LABELS = {False: "🔍 بحث عادي", True: "🤖 بحث ذكي"}
 
 _TABLE_VER_KEY = "cand_table_ver"
+_SMART_KEY = "candidates_smart_toggle"   # يضبطه home.py عبر go_to - لا تغيّر الاسم
 _FILTER_DEFAULTS = {
     "cand_f_status": [], "cand_f_level": [], "cand_f_exp": (0, _EXP_MAX),
     "cand_f_loc": [], "cand_f_skills": [], "cand_sort": _SORT_OPTIONS[0], "candidates_query": "",
@@ -129,6 +134,7 @@ def invalidate_cache() -> None:
 # ------------------------------------------------------------ الفلترة والترتيب (في الذاكرة)
 
 def _describe_filters(f: CandidateSearchFilters) -> str:
+    """وصف نصي للفلاتر المستخرجة (تستخدمه صفحة الرئيسية أيضاً)."""
     parts = []
     if f.role:
         parts.append(f"المسمى: {f.role}")
@@ -143,6 +149,30 @@ def _describe_filters(f: CandidateSearchFilters) -> str:
     if f.location:
         parts.append(f"الموقع: {f.location}")
     return " | ".join(parts) or "لم يُستخرج أي فلتر من الطلب"
+
+
+def _filters_chips_html(f: CandidateSearchFilters) -> str:
+    """الفلاتر المفهومة من الطلب كشارات مختصرة (المسمى / الخبرة / المجال / المهارات / الموقع)."""
+    items: list[str] = []
+    if f.role:
+        items.append(f"المسمى: {f.role}")
+    if f.experience_min is not None and f.experience_max is not None:
+        items.append(f"الخبرة: {f.experience_min:g}–{f.experience_max:g} سنة")
+    elif f.experience_min is not None:
+        items.append(f"الخبرة: {f.experience_min:g}+ سنة")
+    elif f.experience_max is not None:
+        items.append(f"الخبرة: حتى {f.experience_max:g} سنة")
+    if f.industry:
+        items.append(f"المجال: {f.industry}")
+    if f.skills:
+        items.append("المهارات: " + "، ".join(f.skills))
+    if f.location:
+        items.append(f"الموقع: {f.location}")
+    if not items:
+        return "<span style='opacity:.7'>لم يُستخرج أي فلتر من الطلب</span>"
+    style = ("display:inline-block;padding:2px 10px;margin:0 0 6px 6px;border-radius:999px;font-size:.78rem;"
+             "border:1px solid rgba(59,130,246,.35);background:rgba(59,130,246,.10)")
+    return "".join(f'<span style="{style}">{html.escape(i)}</span>' for i in items)
 
 
 def _text_match(c: Candidate, query: str) -> bool:
@@ -226,17 +256,18 @@ def _render_manual_form() -> None:
 
 
 def _render_toolbar(data: dict) -> tuple[str, bool]:
-    """الصف الأول: بحث + بحث ذكي + إضافة. الصف الثاني: الفلاتر. يرجع (نص البحث، هل البحث الذكي مفعّل)."""
+    """الصف الأول: وضع البحث + مربع البحث + إضافة. الصف الثاني: الفلاتر. يرجع (نص البحث، هل البحث الذكي مفعّل)."""
     with st.container(border=True):
-        col_search, col_ai, col_add = st.columns([5, 1.6, 1.2])
-        smart = col_ai.toggle(
-            "🤖 بحث ذكي", key="candidates_smart_toggle",
-            help="مثال: مدير إنتاج بخبرة أكثر من 10 سنوات في البلاستيك ويعرف الحقن والبثق في العاشر من رمضان",
+        col_mode, col_search, col_add = st.columns([2.4, 5, 1.3], vertical_alignment="bottom")
+        smart = col_mode.radio(
+            "طريقة البحث", [False, True], key=_SMART_KEY, horizontal=True, label_visibility="collapsed",
+            format_func=_SEARCH_MODE_LABELS.get,
+            help="البحث الذكي: صف المرشح المطلوب بجملة عادية، مثال: مدير إنتاج بخبرة أكثر من 10 سنوات في البلاستيك والحقن والبثق.",
         )
         query = col_search.text_input(
             "بحث", key="candidates_query", label_visibility="collapsed",
-            placeholder="صف المرشح المطلوب بلغة طبيعية..." if smart
-            else "🔍 بحث بالاسم، البريد، الهاتف، الكود، المسمى، المهارات، الشركة...",
+            placeholder="صف المرشح الذي تحتاجه بجملة عادية..." if smart
+            else "ابحث بالاسم أو البريد أو الهاتف أو المسمى الوظيفي...",
         )
         with col_add.popover("➕ إضافة مرشح"):
             _render_manual_form()
@@ -248,7 +279,7 @@ def _render_toolbar(data: dict) -> tuple[str, bool]:
         c4.multiselect("الموقع", data["locations"], key="cand_f_loc", placeholder="الموقع")
         c5.multiselect("المهارات", data["top_skills"], key="cand_f_skills", placeholder="المهارات")
         c6.selectbox("الترتيب", _SORT_OPTIONS, key="cand_sort")
-    return query.strip(), smart
+    return query.strip(), bool(smart)
 
 
 def _render_export(ids: list[int]) -> None:
@@ -280,18 +311,27 @@ def _selected_id(table_key: str, page_ids: list[int]) -> int | None:
     return page_ids[rows[0]] if rows and rows[0] < len(page_ids) else None
 
 
+def _next_action_label(status: str) -> str:
+    """نص الإجراء التالي المقترح لمرحلة المرشح (نفس مصدر بطاقة المرشح)."""
+    step = candidate_profile._NEXT_ACTIONS.get(status)
+    return step[0] if step else _NO_NEXT_ACTION
+
+
 def _build_rows(page_items: list[Candidate], data: dict, reasons: dict[int, str]) -> list[dict]:
+    """صفوف الجدول بترتيب القرار: من هو؟ ما خبرته؟ أين هو في المسار؟ ماذا أفعل بعد ذلك؟"""
     rows = []
     for c in page_items:
         photo = data["photos"].get(c.id)
+        status = c.status or "New"
         row = {
             "الصورة": _thumb_uri(photo) if photo else None,
             "الاسم": c.full_name,
             "الوظيفة الحالية": c.current_position or "-",
-            "الحالة": f"{_STATUS_ICONS.get(c.status or 'New', '⚪')} {c.status or 'New'}",
-            "المطابقة": (data["summary"].get(c.id) or {}).get("best"),
             "الخبرة": c.total_experience_years,
             "الموقع": c.location or "-",
+            "الحالة": f"{_STATUS_ICONS.get(status, '⚪')} {status}",
+            "المطابقة": (data["summary"].get(c.id) or {}).get("best"),
+            "الإجراء التالي": _next_action_label(status),
         }
         if reasons:
             row["سبب التطابق"] = reasons.get(c.id, "-")
@@ -305,7 +345,18 @@ _COLUMN_CONFIG = {
     "الحالة": st.column_config.TextColumn("الحالة", width="small"),
     "المطابقة": st.column_config.ProgressColumn("المطابقة", min_value=0, max_value=100, format="%.0f%%"),
     "الخبرة": st.column_config.NumberColumn("الخبرة", format="%.1f سنة", width="small"),
+    "الإجراء التالي": st.column_config.TextColumn("الإجراء التالي", width="medium"),
 }
+
+
+def _render_empty_database() -> None:
+    """لا يوجد أي مرشح في النظام: نقترح الخطوة التالية بدل رسالة «لا توجد بيانات»."""
+    components.empty_state(
+        "👥", "لا يوجد مرشحون بعد", "ابدأ ببناء قاعدة المرشحين: ارفع سيراً ذاتية وسيستخرج النظام بياناتها تلقائياً.",
+        [("📄 رفع سيرة ذاتية", "upload_cv", None)], key="cand_empty_db",
+    )
+    with st.popover("👤 أو أضف مرشحاً يدوياً"):
+        _render_manual_form()
 
 
 def render() -> None:
@@ -315,6 +366,10 @@ def render() -> None:
     candidates: list[Candidate] = data["candidates"]
     summary: dict = data["summary"]
 
+    if not candidates:
+        _render_empty_database()
+        return
+
     query, smart = _render_toolbar(data)
 
     # ---- البحث
@@ -323,7 +378,8 @@ def render() -> None:
     if smart and query:
         try:
             found = _smart_search(query)
-            st.caption(f"🔎 {_describe_filters(CandidateSearchFilters(**found['filters']))}")
+            st.markdown("🔎 فهمنا طلبك هكذا: " + _filters_chips_html(CandidateSearchFilters(**found["filters"])),
+                        unsafe_allow_html=True)
             by_id = {c.id: c for c in candidates}
             reasons = dict(found["results"])
             pool = [by_id[cid] for cid, _ in found["results"] if cid in by_id]
@@ -348,8 +404,7 @@ def render() -> None:
         _render_export([c.id for c in filtered])
 
     if not filtered:
-        st.info("لا توجد نتائج مطابقة." if (query or any(f.values())) else
-                "لا يوجد مرشحون بعد. ابدأ برفع سيرة ذاتية من صفحة «رفع سيرة ذاتية».")
+        st.info("لا توجد نتائج مطابقة. جرّب وصفاً أبسط أو اضغط «🧹 مسح الفلاتر».")
         return
 
     # ---- ترقيم الصفحات (القيم تُقرأ من session_state قبل رسم أدواتها أسفل الجدول)
@@ -379,7 +434,10 @@ def render() -> None:
             column_config=_COLUMN_CONFIG,
         )
         col_info, col_size, col_page = st.columns([3, 1, 1])
-        col_info.caption(f"عرض {start + 1}–{start + len(page_items)} من {len(filtered)} — اضغط على صف لفتح البطاقة.")
+        col_info.caption(
+            f"عرض {start + 1}–{start + len(page_items)} من {len(filtered)} — "
+            "اضغط على صف لفتح ملف المرشح والإجراء التالي المقترح."
+        )
         col_size.selectbox("لكل صفحة", _PAGE_SIZES, index=_PAGE_SIZES.index(_DEFAULT_PAGE_SIZE), key="cand_page_size")
         col_page.number_input("الصفحة", min_value=1, max_value=pages, step=1, key="cand_page")
 

@@ -21,6 +21,7 @@ from services.job_service import JobService
 from services.organization_service import OrganizationService
 from services.question_bank_service import QuestionBankService
 from ui import job_components as ui
+from views import job_candidates
 
 # نفس فئات مهارات المرشح حتى تكون المطابقة متناسقة
 _LIST_FIELDS: list[tuple[str, str]] = [
@@ -329,11 +330,35 @@ def _job_form_fields(key: str) -> dict:
         **{attr: _split_items(raw) for attr, raw in raw_lists.items()},
     }
 
-
 @st.dialog("➕ إضافة وظيفة جديدة", width="large")
 def _create_dialog() -> None:
     _seed_form_state("new", None)
-    _render_ai_job_generator("new")
+
+    st.markdown("#### 1️⃣ ما الوظيفة التي تريد التوظيف لها؟")
+    title_seed = st.text_input("مسمى الوظيفة", key="new_wizard_title", placeholder="مثال: مدير مصنع")
+    if st.button("🤖 اقترح المتطلبات تلقائياً", key="new_wizard_suggest", disabled=not title_seed.strip()):
+        try:
+            from ai.job_analyzer import analyze_job_description
+
+            with st.spinner("جاري اقتراح المتطلبات..."):
+                result = analyze_job_description(title_seed.strip())
+            draft = _form_values_from(None, result.model_dump())
+            draft["title"] = draft.get("title") or title_seed.strip()
+            st.session_state["new_pending_draft"] = {k: v for k, v in draft.items() if k in _AI_DRAFT_KEYS}
+            st.session_state["new_ai_suggested"] = True
+            st.rerun(scope="fragment")
+        except AIServiceError as exc:
+            st.error(str(exc))
+
+    _render_ai_job_generator("new")  # للصق وصف كامل بدل المسمى فقط
+
+    # إن كتب المستخدم المسمى ولم يطلب اقتراحاً، ننقله لحقل النموذج
+    if title_seed.strip() and not st.session_state.get("new_title"):
+        st.session_state["new_title"] = title_seed.strip()
+
+    st.markdown("#### 2️⃣ تفاصيل الوظيفة")
+    if st.session_state.get("new_ai_suggested"):
+        st.success("✅ تم تعبئة المتطلبات المقترحة — راجعها وعدّل ما تريد قبل الحفظ.")
     with st.form("new_job_form"):
         values = _job_form_fields("new")
         submitted = st.form_submit_button("حفظ الوظيفة", type="primary")
@@ -349,7 +374,6 @@ def _create_dialog() -> None:
             st.rerun()
         except SmartATSError as exc:
             st.error(str(exc))
-
 
 def _render_job_details_tab(job_id: int, job: Job) -> None:
     edit_key = f"edit_{job_id}"
@@ -741,6 +765,7 @@ def render() -> None:
             _render_cards(rows, stats)
 
         selected = _resolve_selected(rows)
+        job_candidates.render_best_candidates(selected["id"], selected["title"])
         _render_insight_section(selected)
     with side:
         _render_detail_panel(selected, stats)

@@ -13,6 +13,8 @@ from models.candidate import Candidate
 from services.candidate_service import CandidateService
 from services.job_service import JobService
 from services import background_analysis
+from ui.navigation import go_to
+
 
 _SKILL_SECTIONS: list[tuple[str, str]] = [
     ("🛠️ المهارات الفنية", "technical_skills"),
@@ -34,8 +36,6 @@ _NOT_MENTIONED = "غير مذكور في السيرة الذاتية"
 _MAX_SUITABLE_JOBS = 5
 _POLL_SECONDS = 3
 _SUITABLE_JOBS_CACHE_TTL = 60
-_NAV_KEY = "nav_page"                       # مفتاح radio التنقل في app.py
-_INTERVIEWS_PAGE_LABEL = "🗓️ المقابلات"
 
 _STATUS_COLORS = {
     "New": "#64748b", "Screening": "#3b82f6", "Shortlisted": "#22c55e", "Interview": "#f59e0b",
@@ -139,9 +139,6 @@ def clear_suitable_jobs_cache() -> None:
 
 # ------------------------------------------------------------ الترويسة والأزرار السريعة
 
-def _go_to_interviews() -> None:
-    st.session_state[_NAV_KEY] = _INTERVIEWS_PAGE_LABEL
-
 
 def _render_header(candidate: Candidate, photo_path, lang: str) -> None:
     col_photo, col_info = st.columns([1, 3])
@@ -169,33 +166,71 @@ def _render_header(candidate: Candidate, photo_path, lang: str) -> None:
     if line:
         st.markdown(f'<div style="font-size:.85rem">{line}</div>', unsafe_allow_html=True)
 
+# المرحلة الحالية ← (نص الإجراء التالي، المرحلة الجديدة أو None، صفحة الانتقال أو None)
+_NEXT_ACTIONS: dict[str, tuple[str, str | None, str | None]] = {
+    "New": ("بدء الفرز", "Screening", None),
+    "Screening": ("إضافة للقائمة المختصرة", "Shortlisted", None),
+    "Shortlisted": ("جدولة مقابلة", None, "interviews"),
+    "Interview": ("إنشاء عرض", None, "offers"),
+    "Offer": ("متابعة العرض", None, "offers"),
+}
 
-def _render_actions(candidate: Candidate) -> None:
+
+def _render_actions(candidate: Candidate, summary: dict | None = None) -> None:
+    """منطقة القرار: المرحلة الحالية + الإجراء التالي المقترح (زر رئيسي واحد) + إجراءات ثانوية.
+    الذكاء الاصطناعي يقترح فقط؛ القرار للمسؤول."""
     cid = candidate.id
-    col_iv, col_mail, col_stage, col_cv = st.columns(4)
-    col_iv.button("📅 مقابلة", key=f"act_iv_{cid}", on_click=_go_to_interviews, width="stretch",
-                  help="ينقلك لصفحة المقابلات (اختر الوظيفة والمرشح هناك).")
-    col_mail.link_button("✉️ بريد", f"mailto:{candidate.email}" if candidate.email else "#",
-                         disabled=not candidate.email, width="stretch")
-    with col_stage.popover("🔄 المرحلة"):
-        current = candidate.status if candidate.status in CANDIDATE_STATUSES else CANDIDATE_STATUSES[0]
-        new_status = st.selectbox("المرحلة الجديدة", CANDIDATE_STATUSES,
-                                  index=CANDIDATE_STATUSES.index(current), key=f"act_stage_{cid}")
-        if st.button("تطبيق", key=f"act_stage_btn_{cid}", type="primary"):
-            try:
-                with get_db_session() as session:
-                    CandidateService(session).update_candidate(cid, status=new_status)
-                clear_related_caches()
-                st.toast("تم تغيير المرحلة ✅")
-                st.rerun()
-            except SmartATSError as exc:
-                st.error(str(exc))
-    col_cv.download_button(
-        "📥 السيرة", candidate.raw_text or "", file_name=f"{candidate.candidate_code or cid}_cv.txt",
-        disabled=not candidate.raw_text, key=f"act_cv_{cid}", width="stretch",
-        help="نص السيرة المستخرج (الملف الأصلي غير محفوظ).",
-    )
+    status = candidate.status or "New"
+    best = (summary or {}).get("best")
 
+    with st.container(border=True):
+        col_stage, col_match = st.columns([3, 1])
+        col_stage.markdown(f"**المرحلة الحالية:** {_badge(status, _STATUS_COLORS.get(status, '#64748b'))}",
+                           unsafe_allow_html=True)
+        if best is not None:
+            col_match.metric("أفضل مطابقة", f"{best:g}%")
+
+        next_step = _NEXT_ACTIONS.get(status)
+        if next_step is None:
+            st.caption("لا يوجد إجراء تالٍ لهذه المرحلة.")
+        else:
+            label, new_status, page = next_step
+            st.caption(f"💡 الإجراء المقترح: {label}")
+            if new_status is not None:
+                if st.button(f"✅ {label}", key=f"act_next_{cid}", type="primary", width="stretch"):
+                    try:
+                        with get_db_session() as session:
+                            CandidateService(session).update_candidate(cid, status=new_status)
+                        clear_related_caches()
+                        st.toast("تم تغيير المرحلة ✅")
+                        st.rerun()
+                    except SmartATSError as exc:
+                        st.error(str(exc))
+            else:
+                st.button(f"➡️ {label}", key=f"act_next_{cid}", type="primary", width="stretch",
+                          on_click=go_to, args=(page,))
+
+        col_mail, col_stage, col_cv = st.columns(3)
+        col_mail.link_button("✉️ بريد", f"mailto:{candidate.email}" if candidate.email else "#",
+                             disabled=not candidate.email, width="stretch")
+        with col_stage.popover("🔄 تغيير المرحلة"):
+            current = status if status in CANDIDATE_STATUSES else CANDIDATE_STATUSES[0]
+            new_status = st.selectbox("المرحلة الجديدة", CANDIDATE_STATUSES,
+                                      index=CANDIDATE_STATUSES.index(current), key=f"act_stage_{cid}")
+            if st.button("تطبيق", key=f"act_stage_btn_{cid}"):
+                try:
+                    with get_db_session() as session:
+                        CandidateService(session).update_candidate(cid, status=new_status)
+                    clear_related_caches()
+                    st.toast("تم تغيير المرحلة ✅")
+                    st.rerun()
+                except SmartATSError as exc:
+                    st.error(str(exc))
+        col_cv.download_button(
+            "📥 السيرة", candidate.raw_text or "", file_name=f"{candidate.candidate_code or cid}_cv.txt",
+            disabled=not candidate.raw_text, key=f"act_cv_{cid}", width="stretch",
+            help="نص السيرة المستخرج (الملف الأصلي غير محفوظ).",
+        )
 
 def _kpis(candidate: Candidate, summary: dict | None) -> list[tuple[str, str]]:
     years = candidate.total_experience_years
@@ -237,6 +272,13 @@ def _render_overview(candidate: Candidate, lang: str) -> None:
     st.markdown('<div class="cp-title">📝 الملخص</div>', unsafe_allow_html=True)
     st.write(_value(candidate, "summary", lang) or _NOT_MENTIONED)
 
+    analysis = candidate.ai_analysis or {}
+    if analysis.get("strengths"):
+        st.markdown('<div class="cp-title">✓ أبرز نقاط القوة (تقييم الذكاء الاصطناعي)</div>', unsafe_allow_html=True)
+        for s in analysis["strengths"][:3]:
+            st.write(f"✓ {s}")
+        st.caption("مبنية على السيرة الذاتية فقط — راجعها قبل اتخاذ أي قرار.")
+
     st.markdown('<div class="cp-title">🧠 المهارات</div>', unsafe_allow_html=True)
     shown = False
     for title, attr in _SKILL_SECTIONS:
@@ -247,10 +289,6 @@ def _render_overview(candidate: Candidate, lang: str) -> None:
             st.markdown(_chips(items), unsafe_allow_html=True)
     if not shown:
         st.caption(_NOT_MENTIONED)
-
-    st.divider()
-    _render_ai_analysis(candidate.id)
-
 
 def _render_experience(candidate: Candidate, lang: str, collapsible: bool) -> None:
     """بطاقات خبرات؛ قابلة للطي في اللوحة الجانبية، وثابتة داخل expander (لا يجوز تداخل expanders)."""
@@ -493,12 +531,11 @@ def _render_edit_form(candidate: Candidate, photo_path) -> None:
 
 
 # ------------------------------------------------------------ نقاط الدخول
-
 def render_drawer(candidate_id: int, summary: dict | None = None, *, embedded: bool = False) -> None:
     """
-    بطاقة المرشح الكاملة.
-    embedded=True: للاستخدام داخل expander (لا أزرار سريعة، ولا expanders متداخلة).
-    summary: {"best": أفضل مطابقة، "apps": عدد التقديمات} لإظهار مؤشرات المطابقة (اختياري).
+    بطاقة المرشح: ترويسة ← منطقة القرار (المرحلة + الإجراء التالي) ← مؤشرات ← تبويبات.
+    embedded=True: للاستخدام داخل expander (لا منطقة قرار، ولا expanders متداخلة).
+    summary: {"best": أفضل مطابقة، "apps": عدد التقديمات} (اختياري).
     """
     with get_db_session() as session:
         service = CandidateService(session)
@@ -512,23 +549,25 @@ def render_drawer(candidate_id: int, summary: dict | None = None, *, embedded: b
     lang = _choose_language(candidate)
     _render_header(candidate, photo_path, lang)
     if not embedded:
-        _render_actions(candidate)
+        _render_actions(candidate, summary)
     st.markdown(_kpi_html(_kpis(candidate, None if embedded else summary)), unsafe_allow_html=True)
 
-    tab_overview, tab_exp, tab_details, tab_jobs, tab_edit = st.tabs(
-        ["📋 نظرة عامة", "💼 الخبرات", "🎓 التفاصيل", "🎯 الوظائف المناسبة", "✏️ تعديل"]
+    tab_overview, tab_exp, tab_ai, tab_jobs, tab_details, tab_edit = st.tabs(
+        ["📋 نظرة عامة", "💼 الخبرات", "🤖 تحليل الذكاء الاصطناعي", "🎯 الوظائف المناسبة",
+         "🎓 التفاصيل", "✏️ تعديل"]
     )
     with tab_overview:
         _render_overview(candidate, lang)
     with tab_exp:
         _render_experience(candidate, lang, collapsible=not embedded)
-    with tab_details:
-        _render_details(candidate, lang)
+    with tab_ai:
+        _render_ai_analysis(candidate.id)
     with tab_jobs:
         _render_suitable_jobs(candidate_id)
+    with tab_details:
+        _render_details(candidate, lang)
     with tab_edit:
         _render_edit_form(candidate, photo_path)
-
 
 def render_profile(candidate_id: int) -> None:
     """واجهة قديمة تستخدمها صفحتا رفع السير والمقابلات (داخل expander)."""
