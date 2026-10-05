@@ -50,11 +50,19 @@ class HomeService:
         """كل بيانات الصفحة الرئيسية كأنواع بسيطة قابلة للتخزين في كاش Streamlit."""
         kpis = ReportService(self._session).kpis()
         total_jobs = self._count(select(func.count()).select_from(Job))
+        total_applications = self._count(select(func.count()).select_from(Application))
+        # تقدم الإعداد مشتق من البيانات نفسها (لا حالة محفوظة): تختفي القائمة عند اكتمال الخطوات
+        setup = {
+            "candidates": kpis["total_candidates"] > 0,
+            "jobs": total_jobs > 0,
+            "matched": total_applications > 0,
+        }
         return {
             "kpis": kpis,
             "pipeline": self._pipeline(kpis["total_candidates"]),
             "attention": [item for item in self._attention_items() if item is not None],
-            "is_new_workspace": kpis["total_candidates"] == 0 and total_jobs == 0,
+            "setup": setup,
+            "is_new_workspace": not setup["candidates"] and not setup["jobs"],
         }
 
     # ------------------------------------------------------------ مسار التوظيف

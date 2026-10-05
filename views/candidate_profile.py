@@ -13,8 +13,7 @@ from models.candidate import Candidate
 from services.candidate_service import CandidateService
 from services.job_service import JobService
 from services import background_analysis
-from ui.navigation import go_to
-
+from ui.navigation import OFFER_PREFILL_CANDIDATE, OPEN_CREATE_OFFER, go_to
 
 _SKILL_SECTIONS: list[tuple[str, str]] = [
     ("🛠️ المهارات الفنية", "technical_skills"),
@@ -175,7 +174,6 @@ _NEXT_ACTIONS: dict[str, tuple[str, str | None, str | None]] = {
     "Offer": ("متابعة العرض", None, "offers"),
 }
 
-
 def _render_actions(candidate: Candidate, summary: dict | None = None) -> None:
     """منطقة القرار: المرحلة الحالية + الإجراء التالي المقترح (زر رئيسي واحد) + إجراءات ثانوية.
     الذكاء الاصطناعي يقترح فقط؛ القرار للمسؤول."""
@@ -207,8 +205,12 @@ def _render_actions(candidate: Candidate, summary: dict | None = None) -> None:
                     except SmartATSError as exc:
                         st.error(str(exc))
             else:
+                extra = (
+                    {OPEN_CREATE_OFFER: True, OFFER_PREFILL_CANDIDATE: cid}
+                    if page == "offers" and status == "Interview" else {}
+                )
                 st.button(f"➡️ {label}", key=f"act_next_{cid}", type="primary", width="stretch",
-                          on_click=go_to, args=(page,))
+                          on_click=go_to, args=(page,), kwargs=extra)
 
         col_mail, col_stage, col_cv = st.columns(3)
         col_mail.link_button("✉️ بريد", f"mailto:{candidate.email}" if candidate.email else "#",

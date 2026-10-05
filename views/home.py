@@ -156,6 +156,27 @@ def _render_onboarding() -> None:
             kwargs={OPEN_CREATE_JOB: True}, width="stretch",
         )
 
+def _render_setup_checklist(setup: dict[str, bool]) -> None:
+    """قائمة إعداد لمن بدأ ولم يُكمل: تُظهر الخطوات المنجزة وزراً رئيسياً واحداً للخطوة التالية."""
+    steps = [
+        ("candidates", "أضف مرشحين", "upload_cv", {}, "📄 رفع سيرة ذاتية"),
+        ("jobs", "أنشئ وظيفة", "jobs", {OPEN_CREATE_JOB: True}, "➕ إنشاء وظيفة"),
+        ("matched", "ابحث عن أفضل المرشحين لوظيفة", "jobs", {}, "🎯 فتح الوظائف"),
+    ]
+    done = sum(1 for key, *_ in steps if setup[key])
+    next_step = next((s for s in steps if not setup[s[0]]), None)
+
+    with st.container(border=True):
+        st.markdown(f"#### 🚀 أكمل إعداد مساحة عملك ({done} من {len(steps)})")
+        st.progress(done / len(steps))
+        for key, label, *_ in steps:
+            st.write(f"{'✅' if setup[key] else '⬜'} {label}")
+        if next_step is not None:
+            _, _, page, state, button_label = next_step
+            st.button(
+                button_label, key="home_setup_next", on_click=go_to, args=(page,), kwargs=state,
+                type="primary", width="stretch",
+            )
 
 def _render_metrics(kpis: dict) -> None:
     items = [
@@ -197,11 +218,15 @@ def render() -> None:
     st.title("🧩 SmartATS AI")
     st.markdown(f"### مرحباً {user.get('full_name', '')} 👋 — ماذا تريد أن تفعل اليوم؟")
     _render_ask_box()
-    _render_quick_actions()
 
     if data["is_new_workspace"]:
+        _render_quick_actions()
         _render_onboarding()
         return
+
+    if not all(data["setup"].values()):
+        _render_setup_checklist(data["setup"])
+    _render_quick_actions()
 
     st.divider()
     _render_metrics(data["kpis"])

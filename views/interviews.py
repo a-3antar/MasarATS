@@ -21,6 +21,9 @@ from services.interview_service import InterviewService
 from services.job_service import JobService
 from services.question_bank_service import QuestionBankService, split_options
 from views import candidate_profile
+from ui import components
+from ui.navigation import OFFER_PREFILL_APP, OPEN_CREATE_JOB, OPEN_CREATE_OFFER, go_to
+
 
 _LIST_CACHE_TTL = 30
 _MANUAL_OPTIONS = [0, 1, 2, 3, 4, 5]
@@ -314,22 +317,49 @@ def _header_fields(key: str, interview=None) -> dict:
         "next_action": next_action.strip() or None,
     }
 
+def _render_new_interview(application_id: int, job) -> None:
+    """نموذج جدولة مختصر: النوع والموعد والمُقابِل والمكان فقط (الحالة تُضبط تلقائياً «مجدولة»)."""
+    st.markdown('<div class="ats-section-title">🗓️ جدولة مقابلة</div>', unsafe_allow_html=True)
+    st.caption("لم تُجدول مقابلة لهذا المرشح بعد.")
 
-def _render_new_interview(application_id: int) -> None:
-    st.markdown('<div class="ats-section-title">➕ مقابلة جديدة</div>', unsafe_allow_html=True)
+    with get_db_session() as session:
+        question_count = len(QuestionBankService(session).list_for_job(job.id))
+    if question_count:
+        st.caption(f"📋 ستُستخدم أسئلة الوظيفة ({question_count} سؤال) أثناء المقابلة.")
+    else:
+        st.warning("لا توجد أسئلة في بنك هذه الوظيفة بعد. يمكنك إضافتها من تبويب «🗂️ بنك الأسئلة».")
+
+    key = f"new_{application_id}"
     with st.form(f"new_interview_{application_id}"):
-        values = _header_fields(f"new_{application_id}")
-        submitted = st.form_submit_button("إنشاء المقابلة", type="primary")
+        col1, col2 = st.columns(2)
+        with col1:
+            itype = st.selectbox("نوع المقابلة", INTERVIEW_TYPES, key=f"{key}_type")
+            date_input = st.date_input("التاريخ", value=datetime.now().date(), key=f"{key}_date")
+            time_input = st.time_input(
+                "الوقت", value=datetime.now().time().replace(second=0, microsecond=0), key=f"{key}_time"
+            )
+        with col2:
+            interviewer = st.text_input("المُقابِل(ون)", key=f"{key}_interviewer")
+            location = st.text_input("المكان / رابط الاجتماع", key=f"{key}_location")
+        submitted = st.form_submit_button("🗓️ جدولة المقابلة", type="primary")
+
     if submitted:
+        values = {
+            "interview_type": itype,
+            "status": INTERVIEW_STATUSES[0],
+            "scheduled_at": datetime.combine(date_input, time_input).replace(tzinfo=timezone.utc),
+            "interviewer": interviewer.strip() or None,
+            "location": location.strip() or None,
+        }
         try:
             with get_db_session() as session:
                 interview = InterviewService(session).schedule(application_id, **values)
                 interview_id = interview.id
             st.session_state[_PENDING_SELECT_KEY] = (application_id, interview_id)
+            st.toast("تمت جدولة المقابلة ونُقل المرشح إلى مرحلة «المقابلة» ✅")
             st.rerun()
         except SmartATSError as exc:
             st.error(str(exc))
-
 
 def _render_header(interview, job, candidate) -> None:
     """شريط ترويسة المقابلة: بيانات أساسية + شارة الحالة + أزرار البدء والإنهاء."""
@@ -749,6 +779,27 @@ def _render_workspace(interview, job, candidate, app_status: str, score) -> None
 
 
 # ------------------------------------------------------------ الصفحة الرئيسية
+def _render_next_step(interview) -> None:
+    """الخطوة التالية بعد المقابلة (اقتراح فقط؛ القرار النهائي يسجّله المُقابِل بنفسه)."""
+    if interview.status != "Completed":
+        return
+    with st.container(border=True):
+        if interview.decision == "Continue":
+            st.markdown("**✅ قرارك: الانتقال للمرحلة التالية**")
+            st.button(
+                "📨 إنشاء عرض", key=f"iv_offer_{interview.id}", type="primary",
+                on_click=go_to, args=("offers",),
+                kwargs={OPEN_CREATE_OFFER: True, OFFER_PREFILL_APP: interview.application_id},
+            )
+        elif interview.decision is None:
+            hint = (
+                "قيّم الإجابات واحسب الدرجة النهائية، ثم سجّل قرارك في قسم «التقييم النهائي» أسفل الصفحة."
+                if interview.overall_score is None
+                else "سجّل قرارك في قسم «التقييم النهائي» أسفل الصفحة."
+            )
+            st.info(f"💡 الخطوة التالية: {hint}")
+        else:
+            st.caption(f"القرار المسجّل: {_DECISION_LABELS.get(interview.decision, interview.decision)}")
 
 def render() -> None:
     st.header("🗓️ المقابلات")
@@ -757,7 +808,10 @@ def render() -> None:
 
     jobs = _cached_jobs()
     if not jobs:
-        st.info("أضف وظيفة أولاً من صفحة «الوظائف».")
+        components.empty_state(
+            "💼", "لا توجد وظائف بعد", "أنشئ وظيفة أولاً، ثم اختر مرشحاً وحدّد موعد المقابلة.",
+            [("➕ إنشاء وظيفة", "jobs", {OPEN_CREATE_JOB: True})], key="iv_empty_jobs",
+        )
         return
 
     with st.container(border=True):
@@ -765,6 +819,8 @@ def render() -> None:
 
         with col_job:
             job_labels = {f"{j.title} (#{j.id})": j.id for j in jobs}
+            if st.session_state.get("iv_job_select") not in job_labels:
+                st.session_state.pop("iv_job_select", None)  # قيمة قادمة من صفحة أخرى لم تعد صالحة
             job_id = job_labels[st.selectbox("💼 الوظيفة", list(job_labels), key="iv_job_select")]
 
         with get_db_session() as session:
@@ -787,6 +843,8 @@ def render() -> None:
                     (app_id, c, status, score)
                     for app_id, c, status, score in app_rows
                 }
+                if st.session_state.get("iv_app_select") not in app_labels:
+                    st.session_state.pop("iv_app_select", None)
                 application_id, candidate, app_status, score = app_labels[
                     st.selectbox("👤 المرشح (مرتب حسب المطابقة)", list(app_labels), key="iv_app_select")
                 ]
@@ -815,15 +873,20 @@ def render() -> None:
                 )
 
     if not app_rows:
-        st.info("شغّل المطابقة من صفحة «المطابقة» أولاً ليظهر المرشحون هنا. يمكنك تجهيز بنك الأسئلة الآن:")
+        components.empty_state(
+            "🎯", "لا يوجد مرشحون لهذه الوظيفة بعد",
+            "ابحث عن أفضل المرشحين للوظيفة أولاً، ثم اختر أحدهم لجدولة مقابلته. يمكنك تجهيز بنك الأسئلة الآن:",
+            [("🎯 البحث عن مرشحين", "jobs", None)], key="iv_empty_apps",
+        )
         _render_question_bank(job, None)
         return
 
     if selected is None:
-        tab_new, tab_bank = st.tabs(["➕ مقابلة جديدة", "🗂️ بنك الأسئلة"])
+        tab_new, tab_bank = st.tabs(["🗓️ جدولة مقابلة", "🗂️ بنك الأسئلة"])
         with tab_new:
-            _render_new_interview(application_id)
+            _render_new_interview(application_id, job)
         with tab_bank:
             _render_question_bank(job, candidate)
     else:
+        _render_next_step(by_id[selected])
         _render_workspace(by_id[selected], job, candidate, app_status, score)

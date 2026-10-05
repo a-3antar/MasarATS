@@ -72,7 +72,7 @@ class OfferService:
             .order_by(Candidate.full_name)
         )
         return [
-            {"application_id": a.id, "candidate": c.full_name, "job": j.title, "status": a.status}
+            {"application_id": a.id, "candidate_id": c.id, "candidate": c.full_name, "job": j.title, "status": a.status}
             for a, c, j in self._session.execute(stmt).all() if a.id not in busy
         ]
 

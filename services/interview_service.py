@@ -17,6 +17,8 @@ from repositories.application_repository import ApplicationRepository
 from repositories.interview_answer_repository import InterviewAnswerRepository
 from repositories.interview_repository import InterviewRepository
 from repositories.job_question_repository import JobQuestionRepository
+from services.application_service import ApplicationService
+
 
 logger = get_logger(__name__)
 
@@ -60,12 +62,18 @@ class InterviewService:
             raise ValidationError("التقييم يجب أن يكون بين 1 و5.")
 
     def schedule(self, application_id: int, **fields) -> Interview:
-        if self._applications.get_by_id(application_id) is None:
+        """يجدول مقابلة وينقل التقديم تلقائياً إلى مرحلة «Interview» إن لم يكن قد تجاوزها أو رُفض."""
+        application = self._applications.get_by_id(application_id)
+        if application is None:
             raise ValidationError("التقديم غير موجود.")
         self._validate_fields(fields)
         interview = Interview(application_id=application_id, **fields)
         self._interviews.add(interview)  # add() يعمل flush فيتوفر id
         interview.code = f"INT-{date.today().year}-{interview.id:04d}"
+        if application.status in ("New", "Screening", "Shortlisted"):
+            ApplicationService(self._session).change_status(
+                application_id, "Interview", note=f"جدولة المقابلة {interview.code}"
+            )
         logger.info("Interview %s scheduled for application %s", interview.code, application_id)
         return interview
 

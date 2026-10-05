@@ -21,6 +21,8 @@ from core.logging import setup_logging
 from database.database import get_db_session, init_db
 from services.auth_service import REMEMBER_TOKEN_DAYS, AuthService
 from ui.navigation import NAV_KEY, OPEN_CREATE_JOB, OPEN_CREATE_OFFER, PAGES, go_to
+from ui.assistant import render_sidebar_assistant
+
 
 st.set_page_config(page_title="SmartATS AI", page_icon="🧩", layout="wide")
 
@@ -213,6 +215,7 @@ def _authenticated_view() -> None:
         st.markdown(f"**{user['full_name']}**")
         st.caption(f"@{user['username']} · {user['role']}")
         _render_new_menu()
+        render_sidebar_assistant()
         st.divider()
         selected_page = st.radio("التنقل", list(PAGES.keys()), label_visibility="collapsed", key=NAV_KEY)
         st.divider()

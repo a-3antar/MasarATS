@@ -15,6 +15,9 @@ from services.export_service import ExportService
 from services.offer_service import EXPIRED, EXPIRING_SOON, EXPIRING_SOON_DAYS, OfferService
 from services.report_service import ReportService
 from ui import charts
+from ui import components
+from ui.navigation import OFFER_PREFILL_APP, OFFER_PREFILL_CANDIDATE, go_to
+
 
 _DRAFT, _SENT, _ACCEPTED, _DECLINED, _WITHDRAWN = OFFER_STATUSES
 _HIRED = "Hired"
@@ -43,6 +46,8 @@ _DEFAULT_EXPIRY_DAYS = 14
 _DATE_FORMAT, _DATETIME_FORMAT = "%Y-%m-%d", "%Y-%m-%d %H:%M"
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _NAV_KEY, _REPORTS_PAGE = "nav_page", "📈 التقارير"
+
+_OFFER_APP_KEY = "new_offer_app"
 
 _CSS = """<style>
 .of-card{border:1px solid rgba(128,128,128,.25);border-radius:12px;padding:14px 16px;
@@ -165,6 +170,17 @@ def _set_page(page: int) -> None:
 def _go_to_reports() -> None:
     st.session_state[_NAV_KEY] = _REPORTS_PAGE
 
+def _prefill_choice(eligible: list[dict]) -> int:
+    """التقديم المحدَّد مسبقاً في نافذة العرض: بالتقديم أولاً ثم بالمرشح، وإلا أول تقديم مؤهل."""
+    app_id = st.session_state.pop(OFFER_PREFILL_APP, None)
+    candidate_id = st.session_state.pop(OFFER_PREFILL_CANDIDATE, None)
+    for e in eligible:
+        if app_id and e["application_id"] == app_id:
+            return e["application_id"]
+    for e in eligible:
+        if candidate_id and e.get("candidate_id") == candidate_id:
+            return e["application_id"]
+    return eligible[0]["application_id"]
 
 # ------------------------------------------------------------ نوافذ إنشاء/تعديل عرض
 
@@ -173,12 +189,19 @@ def _create_dialog() -> None:
     with get_db_session() as session:
         eligible = OfferService(session).eligible_applications()
     if not eligible:
-        st.info("لا توجد تقديمات مؤهلة لعرض (قائمة مختصرة / مقابلة) أو أن لكلٍّ منها عرضاً نشطاً.")
+        st.info("لا يوجد مرشحون جاهزون لعرض. يصبح المرشح مؤهلاً عند وصوله إلى القائمة المختصرة أو المقابلة، ولا يكون له عرض نشط.")
+        st.button("🧭 فتح مسار التوظيف", key="of_dlg_to_pipeline", on_click=go_to, args=("pipeline",))
         return
 
-    labels = {f"{e['candidate']} — {e['job']} ({e['status']})": e["application_id"] for e in eligible}
+    by_app = {e["application_id"]: e for e in eligible}
+    if st.session_state.get(_OFFER_APP_KEY) not in by_app:
+        st.session_state[_OFFER_APP_KEY] = _prefill_choice(eligible)
+
+    application_id = st.selectbox(
+        "المرشح والوظيفة", list(by_app), key=_OFFER_APP_KEY,
+        format_func=lambda a: f"{by_app[a]['candidate']} — {by_app[a]['job']} ({by_app[a]['status']})",
+    )
     with st.form("new_offer_form"):
-        label = st.selectbox("المرشح والوظيفة", list(labels))
         col_salary, col_start, col_expiry = st.columns(3)
         salary = col_salary.number_input("الراتب المعروض", min_value=0.0, step=500.0)
         start = col_start.date_input("تاريخ البدء المقترح", value=None)
@@ -186,13 +209,15 @@ def _create_dialog() -> None:
             "آخر موعد للرد", value=date.today() + timedelta(days=_DEFAULT_EXPIRY_DAYS), min_value=date.today()
         )
         notes = st.text_area("ملاحظات", height=70)
-        submitted = st.form_submit_button("➕ إنشاء عرض (مسودة)", type="primary")
-    if submitted:
-        _run(
-            lambda s: OfferService(s).create_offer(labels[label], salary or None, start, notes, _user_name(), expires),
-            "تم إنشاء العرض ✅",
-        )
+        submitted = st.form_submit_button("➕ إنشاء العرض (مسودة)", type="primary")
+    st.caption("يُنشأ العرض كمسودة ولا يُرسل للمرشح تلقائياً. بعد مراجعته سجّل الإرسال من قائمة «⋯» في الجدول.")
 
+    if submitted:
+        st.session_state.pop(_OFFER_APP_KEY, None)
+        _run(
+            lambda s: OfferService(s).create_offer(application_id, salary or None, start, notes, _user_name(), expires),
+            "تم إنشاء العرض ونُقل المرشح إلى مرحلة «العرض» ✅",
+        )
 
 @st.dialog("✏️ تعديل العرض", width="large")
 def _edit_dialog(o: dict) -> None:
@@ -577,25 +602,39 @@ def _render_history_tab() -> None:
 
 
 # ------------------------------------------------------------ الصفحة
-
 def render() -> None:
     _inject_css()
-    # views/offers.py
     if st.session_state.pop("open_create_offer", False):
+        st.session_state.pop(_OFFER_APP_KEY, None)  # الاختيار يأتي من التحديد المسبق لا من فتح سابق
         _create_dialog()
     col_title, col_new = st.columns([5, 1])
     with col_title:
         st.header("📨 العروض والتعيين")
-        st.caption("إدارة العروض الوظيفية وتتبع ردود المرشحين")
+        st.caption("أصدر العروض وتابع ردود المرشحين، ثم أكّد التعيين بنفسك.")
     with col_new:
         st.write("")
         if st.button("➕ عرض جديد", key="of_new_btn", type="primary", width="stretch"):
+            st.session_state.pop(_OFFER_APP_KEY, None)
             _create_dialog()
 
     with get_db_session() as session:
         service = OfferService(session)
         offers = service.list_offers()
         interview_count = service.interview_stage_count()
+
+    if not offers:
+        components.empty_state(
+            "📨", "لا توجد عروض بعد",
+            "عندما ينجح مرشح في المقابلة أنشئ له عرضاً من هنا أو من ملفه أو من مسار التوظيف.",
+            [("🧭 فتح مسار التوظيف", "pipeline", None), ("🗓️ المقابلات", "interviews", None)],
+            key="of_empty",
+        )
+        tab_hiring, tab_history = st.tabs(["🎉 التعيين", "🕘 سجل المراحل"])
+        with tab_hiring:
+            _render_hiring_tab(offers)
+        with tab_history:
+            _render_history_tab()
+        return
 
     _render_summary(offers, interview_count)
     st.write("")
