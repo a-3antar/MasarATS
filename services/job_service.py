@@ -44,6 +44,8 @@ class JobService:
         self._positions = PositionRepository(session)
         self._session = session
 
+
+
     @staticmethod
     def _validate_fields(fields: dict) -> None:
         unknown = set(fields) - _EDITABLE_FIELDS
@@ -88,6 +90,13 @@ class JobService:
             elif position.department_id not in (None, department_id):
                 raise ValidationError("المسمى الوظيفي المختار لا يتبع القسم المحدد.")
             resolved["department_id"] = department_id
+            if not (resolved.get("reports_to") or "").strip():
+                boss = (
+                    self._positions.get_by_id(position.reports_to_position_id)
+                    if position.reports_to_position_id else None
+                )
+                if boss is not None:
+                    resolved["reports_to"] = boss.title  # تبعية آلية من الهيكل
 
         if department_id is not None:
             department = self._departments.get_by_id(department_id)
@@ -116,9 +125,14 @@ class JobService:
         ينشئ وظيفة مسودة من مسمى في الهيكل التنظيمي (طلب توظيف لسد الفجوة):
         القسم والمسمى من الهيكل، وعدد الشواغر = الفجوة (وبحد أدنى شاغر واحد).
         """
+
         position = self._positions.get_by_id(position_id)
         if position is None:
             raise ValidationError("المسمى الوظيفي غير موجود.")
+        if position.gap <= 0:
+            raise ValidationError(
+                f"لا توجد فجوة لهذا المسمى (المطلوب {position.required_headcount} والحالي {position.current_headcount})."
+            )
         if any(job.status != _CLOSED for job in self._jobs.list_for_position(position_id)):
             raise ValidationError("توجد وظيفة نشطة مرتبطة بهذا المسمى بالفعل. عدّلها بدل إنشاء وظيفة جديدة.")
         return self.create_job(

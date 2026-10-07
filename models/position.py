@@ -28,6 +28,12 @@ class Position(Base):
     current_headcount: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    sort_order: Mapped[int | None] = mapped_column(Integer, default=0, nullable=True)  # ترتيب يدوي داخل نفس المستوى
+
+    @property
+    def overstaffed(self) -> bool:
+        """الحالي تجاوز المطلوب."""
+        return self.current_headcount > self.required_headcount
 
     @property
     def gap(self) -> int:

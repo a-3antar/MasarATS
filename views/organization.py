@@ -116,14 +116,21 @@ def _edit_department_dialog(dept_id: int) -> None:
     with st.form(f"edit_dept_{dept_id}"):
         name = st.text_input("الاسم", value=dept["name"])
         parent = st.selectbox("القسم الأب", labels, index=_index_of(parents, dept["parent_id"]))
+        dept_positions = {_NONE_BOSS: None} | {
+            f"{p['title']} (#{p['id']})": p["id"] for p in overview["positions"] if p["department_id"] == dept_id
+        }
+        manager_label = st.selectbox(
+            "👑 مدير القسم", list(dept_positions), index=_index_of(dept_positions, dept.get("manager_position_id")),
+            help="عند تحديده تُربط المسميات التي بلا رئيس به آلياً.",
+        )
         saved = st.form_submit_button("💾 حفظ", type="primary")
     if saved:
-        _run(
-            lambda s: OrganizationService(s).update_department(
-                dept_id, name=name, parent_department_id=parents[parent]
-            ),
-            "تم الحفظ ✅",
-        )
+        def save(s):
+            service = OrganizationService(s)
+            service.update_department(dept_id, name=name, parent_department_id=parents[parent])
+            service.set_department_manager(dept_id, dept_positions[manager_label])
+        _run(save, "تم الحفظ ✅")
+
     st.divider()
     confirm = st.checkbox("تأكيد حذف هذا القسم", key=f"confirm_del_dept_{dept_id}")
     if st.button("🗑️ حذف القسم", disabled=not confirm, key=f"del_dept_{dept_id}"):
@@ -277,10 +284,18 @@ def _render_kpis(k: dict) -> None:
         ("🧑‍💼", "المسميات الوظيفية", k["positions"], "مسمى مسجّل", "muted"),
         ("⚠️", "إجمالي الفجوة", k["total_gap"], "شواغر مطلوب تعبئتها", "down" if k["total_gap"] else "up"),
         ("💼", "وظائف مرتبطة بالهيكل", k["linked_jobs"], "وظائف نشطة مرتبطة بمسمى", "up" if k["linked_jobs"] else "muted"),
+        ("🚨", "تحذيرات", k["warnings"], "تجاوزات ونواقص", "down" if k["warnings"] else "up"),
     ]
     for col, (icon, label, value, sub, tone) in zip(st.columns(len(cards)), cards):
         col.markdown(jobs_ui.kpi_card(icon, label, value, sub, tone), unsafe_allow_html=True)
 
+
+def _render_warnings(warnings: list[dict]) -> None:
+    if not warnings:
+        return
+    with st.expander(f"🚨 تحذيرات الهيكل ({len(warnings)})", expanded=any(w["level"] == "error" for w in warnings)):
+        for w in warnings:
+            (st.error if w["level"] == "error" else st.warning)(w["text"], icon="🚨" if w["level"] == "error" else "⚠️")
 
 def _render_filter_bar(overview: dict) -> dict:
     col_search, col_dept, col_gap = st.columns([3, 2, 1.3])
@@ -311,6 +326,9 @@ def _render_positions_table(rows: list[dict]) -> None:
         {
             "المسمى": p["title"],
             "القسم": p["department"] or "-",
+            "المدير": "👑" if p["is_manager"] else "",
+            "المستوى": p["depth"],
+            "تحذير": "⚠️ " + " | ".join(p["warnings"]) if p["warnings"] else "",
             "يتبع": p["reports_to"] or "-",
             "المطلوب": p["required"],
             "الحالي": p["current"],
@@ -352,7 +370,8 @@ def _render_position_panel(pos: dict) -> None:
             ("المطلوب", str(pos["required"])), ("الحالي", str(pos["current"])), ("الفجوة", str(pos["gap"])),
         ]), unsafe_allow_html=True)
         st.markdown(ui.headcount_bar(pos["current"], pos["required"]), unsafe_allow_html=True)
-
+        for w in pos["warnings"]:
+            st.warning(w)
         st.markdown('<div class="jb jb-section">💼 الوظائف المرتبطة</div>', unsafe_allow_html=True)
         if not pos["jobs"]:
             st.caption("لا توجد وظائف مرتبطة بهذا المسمى بعد.")
@@ -472,3 +491,26 @@ def render() -> None:
         _render_tree_tab(overview)
     with tab_depts:
         _render_departments_tab(overview)
+
+def _render_study_tab(overview: dict) -> None:
+    study = OrganizationService.staffing_study(overview["positions"])
+    if not study:
+        st.success("لا يوجد احتياج حالياً: كل المسميات مكتملة.")
+        return
+    st.caption("مرتبة بالأولوية: المدراء ثم الأعلى في الهرم ثم الأكبر فجوة. «غير مغطّى» = الفجوة − شواغر الوظائف المفتوحة.")
+    st.dataframe(
+        pd.DataFrame([
+            {
+                "المسمى": r["title"], "القسم": r["department"] or "-", "يتبع": r["reports_to"] or "-",
+                "المطلوب": r["required"], "الحالي": r["current"], "الفجوة": r["gap"],
+                "شواغر مفتوحة": r["open_vacancies"], "غير مغطّى": r["uncovered"],
+                "الإجراء المقترح": r["action"],
+            }
+            for r in study
+        ]),
+        hide_index=True, width="stretch",
+    )
+    c1, c2, c3 = st.columns(3)
+    c1.metric("إجمالي الفجوة", sum(r["gap"] for r in study))
+    c2.metric("شواغر مفتوحة", sum(r["open_vacancies"] for r in study))
+    c3.metric("غير مغطّى", sum(r["uncovered"] for r in study))

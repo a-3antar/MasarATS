@@ -17,6 +17,8 @@ _CSS = """<style>
 .og-node{display:flex;align-items:center;gap:8px;padding:6px 10px;margin:3px 0;border-radius:10px;
   border:1px solid rgba(128,128,128,.22);background:rgba(128,128,128,.05);font-size:.85rem}
 .og-dept{font-weight:700;background:rgba(37,99,235,.10);border-color:rgba(37,99,235,.35)}
+.og-manager{border-color:rgba(217,119,6,.55);background:rgba(217,119,6,.08)}
+.og-warn{border-color:rgba(220,38,38,.55)}
 .og-count{margin-inline-start:auto;font-size:.72rem;opacity:.75}
 .og-children{margin-inline-start:22px;padding-inline-start:10px;border-inline-start:2px solid rgba(128,128,128,.25)}
 .og-score{margin-bottom:10px}
@@ -69,8 +71,13 @@ def _position_node(pos: dict, by_boss: dict, seen: frozenset) -> str:
         _position_node(child, by_boss, seen) for child in by_boss.get(pos["id"], []) if child["id"] not in seen
     )
     jobs_note = f" · 💼 {pos['active_jobs']}" if pos["active_jobs"] else ""
+    crown = "👑 " if pos.get("is_manager") else ""
+    warn = " ⚠️" if pos.get("warnings") else ""
+    classes = "og-node" + (" og-manager" if pos.get("is_manager") else "") + (" og-warn" if pos.get("warnings") else "")
+    tooltip = html.escape(" | ".join(pos.get("warnings") or []), quote=True)
     node = (
-        f'<div class="og-node"><span>👤 {_esc(pos["title"])}</span>{gap_badge(pos["gap"])}'
+        f'<div class="{classes}" title="{tooltip}"><span>{crown}👤 {_esc(pos["title"])}{warn}</span>'
+        f'{gap_badge(pos["gap"])}'
         f'<span class="og-count">{pos["current"]}/{pos["required"]}{jobs_note}</span></div>'
     )
     return node + (f'<div class="og-children">{children}</div>' if children else "")
@@ -92,8 +99,9 @@ def tree_html(departments: list[dict], positions: list[dict]) -> str:
             _position_node(p, by_boss, frozenset()) for p in by_dept.get(dept["id"], []) if p["reports_to_id"] is None
         )
         subs = "".join(department_node(child) for child in dept_children.get(dept["id"], []))
+        manager = f' · 👑 {_esc(dept["manager"])}' if dept.get("manager") else ""
         head = (
-            f'<div class="og-node og-dept"><span>🏢 {_esc(dept["name"])}</span>'
+            f'<div class="og-node og-dept"><span>🏢 {_esc(dept["name"])}{manager}</span>'
             f'<span class="og-count">🧑‍💼 {dept["positions"]} · 💼 {dept["jobs"]}</span></div>'
         )
         body = roots + subs

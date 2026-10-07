@@ -304,6 +304,14 @@ def _job_form_fields(key: str) -> dict:
         education = st.text_input("المؤهل الدراسي", key=f"{key}_edu")
         salary_max = st.number_input("الراتب الأعلى", min_value=0.0, step=500.0, key=f"{key}_smax")
         vacancies = st.number_input("عدد الشواغر", min_value=1, step=1, key=f"{key}_vac")
+
+    pos = next((p for p in org["positions"] if p["id"] == position_id), None)
+    if pos:
+        boss = pos["reports_to"]
+        st.caption(f"👔 يتبع آلياً: {boss}" if boss else "👔 هذا المسمى بلا رئيس في الهيكل.")
+        if int(vacancies) > max(pos["gap"], 0):
+            st.warning(f"عدد الشواغر ({int(vacancies)}) يتجاوز الفجوة الحالية للمسمى ({max(pos['gap'], 0)}).")
+
     status = st.selectbox("حالة الوظيفة", JOB_STATUSES, key=f"{key}_status", format_func=_status_label)
 
     raw_lists: dict[str, str] = {}

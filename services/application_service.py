@@ -69,6 +69,10 @@ class ApplicationService:
             logger.info("Hire on job %s has no linked position; headcount not updated", job_id)
             return
         position.current_headcount = max(position.current_headcount + delta, 0)
+        
+        if position.current_headcount > position.required_headcount:
+            logger.warning("Position %s headcount %s exceeds required %s",
+                           position.id, position.current_headcount, position.required_headcount)
 
     def _sync_candidate_status(self, candidate_id: int) -> None:
         candidate = self._candidates.get_by_id(candidate_id)

@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.database import Base
@@ -19,6 +19,8 @@ class Department(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
+        # مسمى مدير القسم (بدون FK لتفادي الدوران بين departments و positions)
+    manager_position_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     parent_department_id: Mapped[int | None] = mapped_column(
         ForeignKey("departments.id"), nullable=True, index=True
     )
