@@ -1,7 +1,8 @@
 """صفحة المقابلات كـ Interview Workspace بتصميم منظّم في ثلاثة تبويبات:
 🎙️ المقابلة (ترويسة + بطاقة المرشح + مساحة السؤال + التقييم النهائي)،
-🗂️ بنك أسئلة الوظيفة، ⚙️ إدارة المقابلة (تعديل/تصدير/استيراد/حذف).
-الأسئلة في بنك مرتبط بالوظيفة، ويمكن نسخه بين الوظائف. القرار النهائي بشري فقط."""
+📝 أسئلة المقابلة (تخص هذه المقابلة فقط: يدوية أو بالذكاء الاصطناعي أو مستوردة اختيارياً من مقابلة أخرى)،
+⚙️ إدارة المقابلة (تعديل/تصدير/استيراد/حذف).
+كل مقابلة = مرشح + وظيفة + تاريخ، ولها أسئلتها وإجاباتها. القرار النهائي بشري فقط."""
 
 import html
 from datetime import datetime, timezone
@@ -173,12 +174,40 @@ def _run(action, success: str | None = None, rerun: bool = True) -> bool:
     return True
 
 
-# ------------------------------------------------------------ تبويب: بنك أسئلة الوظيفة
+# ------------------------------------------------------------ تنبيه تكرار المقابلة
+
+def _render_repeat_notice(previous: list[dict], current: bool) -> None:
+    """تنبيه: سبقت مقابلة هذا المرشح لنفس الوظيفة (مقابلة أخرى بعد مدة)."""
+    if not previous:
+        return
+    last = previous[0]
+    score = f"{last['score']:g}/100" if last["score"] is not None else "بدون درجة"
+    if current:
+        head = f"🔁 هذه المقابلة رقم {len(previous) + 1} لنفس المرشح على نفس الوظيفة. "
+    else:
+        head = f"🔁 سبقت مقابلة هذا المرشح لهذه الوظيفة {len(previous)} مرة. "
+    st.info(f"{head}آخر مقابلة: {last['date']} ({last['type']}) قبل {last['days_before']} يوماً — الدرجة: {score}.")
+    with st.expander("المقابلات السابقة لنفس الوظيفة"):
+        st.dataframe(
+            [
+                {
+                    "الرقم": p["code"], "التاريخ": p["date"], "النوع": p["type"],
+                    "قبل (يوم)": p["days_before"], "الدرجة": p["score"] if p["score"] is not None else "-",
+                    "القرار": _DECISION_LABELS.get(p["decision"], p["decision"] or "-"),
+                }
+                for p in previous
+            ],
+            hide_index=True, width="stretch",
+        )
+
+
+# ------------------------------------------------------------ تبويب: أسئلة المقابلة
 
 def _render_bank_question_row(q) -> None:
     with st.container(border=True):
+        imported = " · 📥 مستوردة" if q.imported_from_interview_id else ""
         st.caption(
-            f"{QuestionBankService.category_label(q.category)} · {_TYPE_LABELS.get(q.question_type or 'text')} · #{q.id}"
+            f"{QuestionBankService.category_label(q.category)} · {_TYPE_LABELS.get(q.question_type or 'text')} · #{q.id}{imported}"
         )
         text = st.text_area("السؤال", value=q.question, key=f"bank_q_{q.id}", height=60)
         col_comp, col_diff = st.columns(2)
@@ -200,9 +229,9 @@ def _render_bank_question_row(q) -> None:
                 _run(lambda s: QuestionBankService(s).delete_question(q.id), "تم الحذف 🗑️")
 
 
-def _render_add_question_form(job_id: int) -> None:
+def _render_add_question_form(interview_id: int) -> None:
     st.markdown("**➕ إضافة سؤال**")
-    with st.form(f"bank_add_form_{job_id}", clear_on_submit=True):
+    with st.form(f"q_add_form_{interview_id}", clear_on_submit=True):
         text = st.text_area("نص السؤال", height=70)
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -215,14 +244,55 @@ def _render_add_question_form(job_id: int) -> None:
         submitted = st.form_submit_button("إضافة", type="primary")
     if submitted:
         _run(lambda s: QuestionBankService(s).add_question(
-            job_id, text, question_type=qtype, options=split_options(options_raw),
+            interview_id, text, question_type=qtype, options=split_options(options_raw),
             competency=competency, difficulty=difficulty), "تمت إضافة السؤال ✅")
 
 
-def _render_bank_tools(job, candidate) -> None:
-    """توليد بالذكاء الاصطناعي، نسخ من وظيفة أخرى (قالب)، وأوزان الكفاءات."""
-    if candidate is not None and st.button(
-        "🤖 توليد أسئلة بالذكاء الاصطناعي (بناءً على سيرة المرشح المختار)", key=f"gen_ai_{job.id}"
+def _render_import_and_compare(interview) -> None:
+    """استيراد اختياري لأسئلة مقابلة أخرى (نص فقط) + مقارنة الدرجات على الأسئلة المتطابقة."""
+    with get_db_session() as session:
+        others = QuestionBankService(session).importable_interviews(interview.id)
+
+    with st.expander("📥 استيراد أسئلة من مقابلة أخرى (اختياري — لمقارنة المرشحين)"):
+        if not others:
+            st.caption("لا توجد مقابلات أخرى لهذه الوظيفة تحتوي أسئلة.")
+            return
+
+        labels = {o["label"]: o["id"] for o in others}
+        picked = st.selectbox("المقابلة المصدر", list(labels), key=f"imp_src_{interview.id}")
+        st.caption("يُنسخ نص الأسئلة فقط (بدون إجابات المرشح الآخر) ويُتخطى المكرر.")
+        if st.button("📋 استيراد", key=f"imp_btn_{interview.id}"):
+            try:
+                with get_db_session() as session:
+                    copied = QuestionBankService(session).import_from_interview(interview.id, labels[picked])
+                _flash("success", f"تم استيراد {copied} سؤال.")
+                st.rerun()
+            except SmartATSError as exc:
+                st.error(str(exc))
+
+        st.divider()
+        st.markdown("**📊 مقارنة الدرجات على الأسئلة المتطابقة**")
+        chosen = st.multiselect("قارن هذه المقابلة مع", list(labels), key=f"cmp_{interview.id}")
+        if not chosen:
+            return
+        ids = [interview.id] + [labels[c] for c in chosen]
+        with get_db_session() as session:
+            rows = QuestionBankService(session).compare(ids)
+        names = {interview.id: "هذه المقابلة", **{labels[c]: c.split(" · ")[1] for c in chosen}}
+        if not rows:
+            st.info("لا توجد أسئلة متطابقة بين المقابلات المختارة.")
+            return
+        st.dataframe(
+            [{"السؤال": r["question"], **{names[i]: r["scores"].get(i) for i in ids}} for r in rows],
+            hide_index=True, width="stretch",
+        )
+        st.caption("الدرجات من 5 (الدرجة الفعلية: المُقابِل إن وُجد وإلا الذكاء الاصطناعي).")
+
+
+def _render_question_tools(interview, job, candidate) -> None:
+    """توليد بالذكاء الاصطناعي، استيراد/مقارنة اختياريان، وأوزان الكفاءات (على مستوى الوظيفة)."""
+    if st.button(
+        "🤖 توليد أسئلة بالذكاء الاصطناعي (من سيرة هذا المرشح ومتطلبات الوظيفة)", key=f"gen_ai_{interview.id}"
     ):
         try:
             from ai.interview_generator import generate_interview_questions
@@ -230,49 +300,35 @@ def _render_bank_tools(job, candidate) -> None:
             with st.spinner("جاري توليد الأسئلة..."):
                 result = generate_interview_questions(candidate, job)
             with get_db_session() as session:
-                added = QuestionBankService(session).add_ai_questions(job.id, result)
-            st.toast(f"تمت إضافة {len(added)} سؤال ✅")
+                added = QuestionBankService(session).add_ai_questions(interview.id, result)
+            st.toast(f"تمت إضافة {len(added)} سؤال لهذه المقابلة ✅")
             st.rerun()
         except SmartATSError as exc:
             st.error(str(exc))
 
-    others = {f"{j.title} (#{j.id})": j.id for j in _cached_jobs() if j.id != job.id}
-    if others:
-        col_pick, col_btn = st.columns([3, 1])
-        with col_pick:
-            source_label = st.selectbox("نسخ أسئلة من وظيفة أخرى (قالب)", list(others), key=f"copy_src_{job.id}")
-        with col_btn:
-            st.write("")
-            if st.button("📋 نسخ", key=f"copy_btn_{job.id}", width="stretch"):
-                try:
-                    with get_db_session() as session:
-                        copied = QuestionBankService(session).copy_from_job(job.id, others[source_label])
-                    _flash("success", f"تم نسخ {copied} سؤال.")
-                    st.rerun()
-                except SmartATSError as exc:
-                    st.error(str(exc))
+    _render_import_and_compare(interview)
 
     with get_db_session() as session:
         weights_text = QuestionBankService(session).competency_weights_text(job.id)
     raw = st.text_area(
-        "أوزان الكفاءات (سطر لكل كفاءة، مثال: Leadership: 20). اتركها فارغة لمتوسط بسيط.",
-        value=weights_text, key=f"weights_{job.id}", height=90,
+        "أوزان الكفاءات لهذه الوظيفة (سطر لكل كفاءة، مثال: Leadership: 20). فارغة = متوسط بسيط.",
+        value=weights_text, key=f"weights_{job.id}_{interview.id}", height=90,
     )
-    if st.button("💾 حفظ الأوزان", key=f"weights_save_{job.id}"):
+    if st.button("💾 حفظ الأوزان", key=f"weights_save_{job.id}_{interview.id}"):
         _run(lambda s: QuestionBankService(s).set_competency_weights(job.id, raw), "تم حفظ الأوزان ✅")
 
 
-def _render_question_bank(job, candidate) -> None:
-    st.caption("بنك أسئلة الوظيفة مشترك لكل المرشحين المتقدمين لها.")
-    with get_db_session() as session:
-        questions = QuestionBankService(session).list_for_job(job.id)
+def _render_question_bank(interview, job, candidate, questions: list) -> None:
+    """تبويب أسئلة هذه المقابلة فقط."""
+    when = interview.scheduled_at.strftime("%Y-%m-%d") if interview.scheduled_at else "-"
+    st.caption(f"أسئلة مقابلة {candidate.full_name} لوظيفة {job.title} بتاريخ {when}. لا تظهر في أي مقابلة أخرى.")
     if not questions:
-        st.info("لا توجد أسئلة بعد. أضفها يدوياً أو ولّدها بالذكاء الاصطناعي أو انسخها من وظيفة أخرى.")
+        st.info("لا توجد أسئلة بعد. أضفها يدوياً أو ولّدها بالذكاء الاصطناعي أو استوردها من مقابلة أخرى.")
     for q in questions:
         _render_bank_question_row(q)
-    _render_add_question_form(job.id)
+    _render_add_question_form(interview.id)
     st.divider()
-    _render_bank_tools(job, candidate)
+    _render_question_tools(interview, job, candidate)
 
 
 # ------------------------------------------------------------ ترويسة المقابلة
@@ -317,17 +373,18 @@ def _header_fields(key: str, interview=None) -> dict:
         "next_action": next_action.strip() or None,
     }
 
+
 def _render_new_interview(application_id: int, job) -> None:
     """نموذج جدولة مختصر: النوع والموعد والمُقابِل والمكان فقط (الحالة تُضبط تلقائياً «مجدولة»)."""
     st.markdown('<div class="ats-section-title">🗓️ جدولة مقابلة</div>', unsafe_allow_html=True)
-    st.caption("لم تُجدول مقابلة لهذا المرشح بعد.")
 
     with get_db_session() as session:
-        question_count = len(QuestionBankService(session).list_for_job(job.id))
-    if question_count:
-        st.caption(f"📋 ستُستخدم أسئلة الوظيفة ({question_count} سؤال) أثناء المقابلة.")
+        previous = InterviewService(session).previous_interviews(application_id)
+    if previous:
+        _render_repeat_notice(previous, current=False)
     else:
-        st.warning("لا توجد أسئلة في بنك هذه الوظيفة بعد. يمكنك إضافتها من تبويب «🗂️ بنك الأسئلة».")
+        st.caption("لم تُجدول مقابلة لهذا المرشح على هذه الوظيفة بعد.")
+    st.caption("أسئلة المقابلة تُضاف بعد الجدولة من تبويب «📝 أسئلة المقابلة».")
 
     key = f"new_{application_id}"
     with st.form(f"new_interview_{application_id}"):
@@ -360,6 +417,7 @@ def _render_new_interview(application_id: int, job) -> None:
             st.rerun()
         except SmartATSError as exc:
             st.error(str(exc))
+
 
 def _render_header(interview, job, candidate) -> None:
     """شريط ترويسة المقابلة: بيانات أساسية + شارة الحالة + أزرار البدء والإنهاء."""
@@ -488,7 +546,7 @@ def _answer_input(interview_id: int, question, current: str) -> str:
     return st.text_area("إجابة المرشح", value=current, key=key, height=150, placeholder="اكتب إجابة المرشح هنا...")
 
 
-def _render_ai_analysis(answer, interview_id: int, job, question_id: int) -> None:
+def _render_ai_analysis(answer, interview_id: int, question_id: int) -> None:
     if answer is None or answer.ai_score is None:
         return
     with st.container(border=True):
@@ -510,9 +568,10 @@ def _render_ai_analysis(answer, interview_id: int, job, question_id: int) -> Non
                 st.write(f"⚠️ يحتاج تحققاً: {c}")
         if answer.ai_followup:
             st.info(f"💬 سؤال متابعة مقترح: {answer.ai_followup}")
-            if st.button("➕ أضفه لبنك الأسئلة", key=f"followup_{interview_id}_{question_id}"):
+            if st.button("➕ أضفه لأسئلة هذه المقابلة", key=f"followup_{interview_id}_{question_id}"):
                 _run(lambda s: QuestionBankService(s).add_question(
-                    job.id, answer.ai_followup, source="ai", category="cv_specific"), "تمت إضافة سؤال المتابعة ✅")
+                    interview_id, answer.ai_followup, source="ai", category="cv_specific"),
+                    "تمت إضافة سؤال المتابعة ✅")
 
 
 def _render_interviewer_review(interview_id: int, question_id: int, answer) -> None:
@@ -573,7 +632,7 @@ def _render_question_workspace(interview, job, question, answer, index: int, tot
                     service.evaluate_answer(iid, qid, job)
                 _run(analyze, "تم التحليل ✅")
 
-    _render_ai_analysis(answer, iid, job, qid)
+    _render_ai_analysis(answer, iid, qid)
     _render_interviewer_review(iid, qid, answer)
 
 
@@ -594,7 +653,7 @@ def _render_evaluation(interview, job) -> None:
                 st.markdown(f'<div class="ats-rings">{rings}</div>', unsafe_allow_html=True)
                 st.caption("الدرجة الكلية للكفاءات تُحسب على الكفاءات المُقيَّمة فقط، بأوزان الوظيفة إن وُجدت.")
             else:
-                st.caption("اربط الأسئلة بكفاءات من بنك الأسئلة لتظهر درجات الكفاءات هنا.")
+                st.caption("اربط الأسئلة بكفاءات من تبويب «📝 أسئلة المقابلة» لتظهر درجات الكفاءات هنا.")
         with col_overall:
             if interview.overall_score is not None:
                 st.markdown(_ring(interview.overall_score, "الدرجة النهائية", 96), unsafe_allow_html=True)
@@ -659,25 +718,27 @@ def _render_edit_interview(interview) -> None:
             saved = st.form_submit_button("💾 حفظ", type="primary")
         if saved:
             _run(lambda s: InterviewService(s).update(interview.id, **values), "تم حفظ التعديلات ✅")
+        st.caption("حذف المقابلة يحذف أسئلتها وإجابات المرشح عليها نهائياً.")
         confirm = st.checkbox("تأكيد حذف هذه المقابلة", key=f"confirm_del_{interview.id}")
         if st.button("🗑️ حذف المقابلة", disabled=not confirm, key=f"del_{interview.id}"):
             _run(lambda s: InterviewService(s).delete(interview.id), "تم حذف المقابلة 🗑️")
 
 
-def _render_export_questions(job, questions: list) -> None:
+def _render_export_questions(interview, job, candidate, questions: list) -> None:
     with st.container(border=True):
-        st.markdown("**📤 تصدير الأسئلة**")
+        st.markdown("**📤 تصدير أسئلة المقابلة**")
         if not questions:
             st.caption("لا توجد أسئلة لتصديرها.")
             return
         try:
-            file_bytes = export_questions_docx(job, questions)
+            file_bytes = export_questions_docx(interview, job, candidate.full_name, questions)
         except SmartATSError as exc:
             st.error(str(exc))
             return
         st.download_button(
             "⬇️ تصدير الأسئلة (Word) لتعبئة الإجابات خارج البرنامج", file_bytes,
-            file_name=f"interview_questions_job_{job.id}.docx", mime=_DOCX_MIME, key=f"export_docx_{job.id}",
+            file_name=f"interview_{interview.code or interview.id}.docx", mime=_DOCX_MIME,
+            key=f"export_docx_{interview.id}",
         )
 
 
@@ -686,7 +747,7 @@ def _render_import_answers(interview, job) -> None:
     with st.container(border=True):
         st.markdown("**📥 استيراد الإجابات من ملف Word**")
         st.caption(
-            "ارفع نفس الملف المُصدَّر من بنك الأسئلة بعد كتابة الإجابات. ستُحفظ الإجابات (وتستبدل "
+            "ارفع نفس الملف المُصدَّر من هذه المقابلة بعد كتابة الإجابات. ستُحفظ الإجابات (وتستبدل "
             "إجابات نفس الأسئلة) ثم تُقيَّم. الأسئلة التي لم تُكتب لها إجابة لا تتأثر، وتقييمات المُقابِل تبقى كما هي."
         )
         uploaded = st.file_uploader("ملف الإجابات (.docx)", type=["docx"], key=f"import_file_{interview.id}")
@@ -696,7 +757,7 @@ def _render_import_answers(interview, job) -> None:
             return
 
         try:
-            answers = parse_answers_docx(uploaded.getvalue(), expected_job_id=job.id)
+            answers = parse_answers_docx(uploaded.getvalue(), expected_interview_id=interview.id)
             if not answers:
                 st.warning("لم يتم العثور على أي إجابة مكتوبة في الملف.")
                 return
@@ -722,7 +783,7 @@ def _render_import_answers(interview, job) -> None:
         if result["overall_score"] is not None:
             message += f" الدرجة النهائية: {result['overall_score']:g} / 100."
         if result["unknown"]:
-            message += f" تم تجاهل {len(result['unknown'])} سؤال غير موجود في بنك الوظيفة."
+            message += f" تم تجاهل {len(result['unknown'])} سؤال غير موجود في هذه المقابلة."
         if result["failed"]:
             _flash("warning", message + f" تعذّر تحليل {len(result['failed'])} إجابة (حُفظت بدون درجة).")
         else:
@@ -730,19 +791,22 @@ def _render_import_answers(interview, job) -> None:
         st.rerun()
 
 
-def _render_manage_tab(interview, job, questions: list) -> None:
+def _render_manage_tab(interview, job, candidate, questions: list) -> None:
     col_left, col_right = st.columns(2)
     with col_left:
         _render_edit_interview(interview)
     with col_right:
-        _render_export_questions(job, questions)
+        _render_export_questions(interview, job, candidate, questions)
         _render_import_answers(interview, job)
 
 
 # ------------------------------------------------------------ مساحة العمل الرئيسية
 
-def _render_interview_tab(interview, job, candidate, app_status: str, score, questions, answers, history) -> None:
+def _render_interview_tab(
+    interview, job, candidate, app_status: str, score, questions, answers, history, previous
+) -> None:
     _render_header(interview, job, candidate)
+    _render_repeat_notice(previous, current=True)
     st.write("")
 
     col_left, col_right = st.columns([1, 2], gap="large")
@@ -751,7 +815,7 @@ def _render_interview_tab(interview, job, candidate, app_status: str, score, que
     with col_right:
         st.markdown('<div class="ats-section-title">🎙️ مساحة المقابلة</div>', unsafe_allow_html=True)
         if not questions:
-            st.info("لا توجد أسئلة في بنك هذه الوظيفة بعد. أضفها من تبويب «🗂️ بنك الأسئلة».")
+            st.info("لا توجد أسئلة لهذه المقابلة بعد. أضفها من تبويب «📝 أسئلة المقابلة».")
         else:
             index = _render_navigator(interview.id, questions, answers)
             _render_question_workspace(
@@ -764,21 +828,25 @@ def _render_interview_tab(interview, job, candidate, app_status: str, score, que
 
 def _render_workspace(interview, job, candidate, app_status: str, score) -> None:
     with get_db_session() as session:
-        questions = QuestionBankService(session).list_for_job(job.id)
+        questions = QuestionBankService(session).list_for_interview(interview.id)
         service = InterviewService(session)
         answers = service.answers_map(interview.id)
         history = service.history_for_candidate(candidate.id, exclude_id=interview.id)
+        previous = service.previous_interviews(
+            interview.application_id, before=interview.scheduled_at, exclude_id=interview.id
+        )
 
-    tab_main, tab_bank, tab_manage = st.tabs(["🎙️ المقابلة", "🗂️ بنك الأسئلة", "⚙️ الإدارة"])
+    tab_main, tab_questions, tab_manage = st.tabs(["🎙️ المقابلة", "📝 أسئلة المقابلة", "⚙️ الإدارة"])
     with tab_main:
-        _render_interview_tab(interview, job, candidate, app_status, score, questions, answers, history)
-    with tab_bank:
-        _render_question_bank(job, candidate)
+        _render_interview_tab(interview, job, candidate, app_status, score, questions, answers, history, previous)
+    with tab_questions:
+        _render_question_bank(interview, job, candidate, questions)
     with tab_manage:
-        _render_manage_tab(interview, job, questions)
+        _render_manage_tab(interview, job, candidate, questions)
 
 
 # ------------------------------------------------------------ الصفحة الرئيسية
+
 def _render_next_step(interview) -> None:
     """الخطوة التالية بعد المقابلة (اقتراح فقط؛ القرار النهائي يسجّله المُقابِل بنفسه)."""
     if interview.status != "Completed":
@@ -800,6 +868,7 @@ def _render_next_step(interview) -> None:
             st.info(f"💡 الخطوة التالية: {hint}")
         else:
             st.caption(f"القرار المسجّل: {_DECISION_LABELS.get(interview.decision, interview.decision)}")
+
 
 def render() -> None:
     st.header("🗓️ المقابلات")
@@ -875,18 +944,13 @@ def render() -> None:
     if not app_rows:
         components.empty_state(
             "🎯", "لا يوجد مرشحون لهذه الوظيفة بعد",
-            "ابحث عن أفضل المرشحين للوظيفة أولاً، ثم اختر أحدهم لجدولة مقابلته. يمكنك تجهيز بنك الأسئلة الآن:",
+            "ابحث عن أفضل المرشحين للوظيفة أولاً، ثم اختر أحدهم لجدولة مقابلته.",
             [("🎯 البحث عن مرشحين", "jobs", None)], key="iv_empty_apps",
         )
-        _render_question_bank(job, None)
         return
 
     if selected is None:
-        tab_new, tab_bank = st.tabs(["🗓️ جدولة مقابلة", "🗂️ بنك الأسئلة"])
-        with tab_new:
-            _render_new_interview(application_id, job)
-        with tab_bank:
-            _render_question_bank(job, candidate)
+        _render_new_interview(application_id, job)
     else:
         _render_next_step(by_id[selected])
         _render_workspace(by_id[selected], job, candidate, app_status, score)

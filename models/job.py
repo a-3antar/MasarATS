@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, Float
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.constants import DEFAULT_MATCH_WEIGHTS, JOB_STATUSES

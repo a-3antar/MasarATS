@@ -156,9 +156,7 @@ class JobService:
         return job
 
     def duplicate_job(self, job_id: int) -> Job:
-        """ينسخ الوظيفة (وبنك أسئلتها) كمسودة جديدة. لا تُنسخ التقديمات ولا الـ embedding."""
-        from services.question_bank_service import QuestionBankService
-
+        """ينسخ الوظيفة كمسودة جديدة. لا تُنسخ التقديمات ولا المقابلات ولا الأسئلة ولا الـ embedding."""
         source = self._get_or_raise(job_id)
         values = {}
         for name in _DUPLICATED_FIELDS:
@@ -166,7 +164,6 @@ class JobService:
             values[name] = list(value) if isinstance(value, list) else dict(value) if isinstance(value, dict) else value
         copy = Job(title=f"{source.title}{_COPY_SUFFIX}", status=_DRAFT, updated_at=_utcnow(), **values)
         self._jobs.add(copy)
-        QuestionBankService(self._session).copy_from_job(copy.id, source.id)
         return copy
 
     def close_job(self, job_id: int) -> Job:

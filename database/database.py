@@ -67,13 +67,16 @@ def _add_missing_columns() -> None:
                 logger.info("Added missing column %s.%s", table.name, column.name)
 
 def init_db() -> None:
-    """إنشاء كل الجداول المعرّفة إن لم تكن موجودة + إضافة الأعمدة الناقصة. تُستدعى عند بدء التطبيق."""
     from models import (
         application, application_stage_history, candidate, department, interview, interview_answer,
         job, job_question, offer, position, user,
     )  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()
+
+    from services.question_bank_service import migrate_legacy_bank
+    with get_db_session() as session:
+        migrate_legacy_bank(session)
     logger.info("Database initialized (tables ensured).")
 
 @contextmanager

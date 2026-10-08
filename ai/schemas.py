@@ -130,10 +130,26 @@ class CandidateSearchFilters(BaseModel):
     def _normalize_skills(cls, value: Any) -> Any:
         return _coerce_to_str_list(value)
 
+_VALID_DIFFICULTIES = {"low": "Low", "medium": "Medium", "high": "High"}
+
+
 class InterviewQuestion(BaseModel):
     question: str
     rationale: str | None = None  # سبب هذا السؤال (مرتبط بأي جزء من الوظيفة أو السيرة الذاتية)
+    competency: str | None = None  # الكفاءة التي يقيسها السؤال (اسم قصير بالإنجليزية)
+    difficulty: str | None = None  # Low / Medium / High
 
+    @field_validator("competency", mode="before")
+    @classmethod
+    def _clean_competency(cls, value: Any) -> Any:
+        text = str(value).strip() if value is not None else ""
+        return text[:100] or None
+
+    @field_validator("difficulty", mode="before")
+    @classmethod
+    def _normalize_difficulty(cls, value: Any) -> Any:
+        """يطبّع الصعوبة إلى Low/Medium/High، والقيمة غير المفهومة تصبح None بدل رفض الاستجابة كلها."""
+        return _VALID_DIFFICULTIES.get(str(value or "").strip().lower())
 
 class InterviewQuestions(BaseModel):
     """أسئلة مقابلة مبنية على وصف الوظيفة وسيرة المرشح الفعلية - لا تخترع إنجازات غير مذكورة."""

@@ -17,3 +17,10 @@ class JobQuestionRepository(BaseRepository[JobQuestion]):
 
     def delete_for_job(self, job_id: int) -> None:
         self._session.execute(delete(JobQuestion).where(JobQuestion.job_id == job_id))
+
+    def get_for_interview(self, interview_id: int) -> list[JobQuestion]:
+        stmt = select(JobQuestion).where(JobQuestion.interview_id == interview_id).order_by(JobQuestion.id)
+        return list(self._session.scalars(stmt).all())
+
+    def delete_for_interview(self, interview_id: int) -> None:
+        self._session.execute(delete(JobQuestion).where(JobQuestion.interview_id == interview_id))

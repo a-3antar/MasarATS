@@ -387,12 +387,13 @@ def _render_position_panel(pos: dict) -> None:
             f'<div class="jb"><div class="jb-title">{html.escape(pos["title"])}</div>{ui.gap_badge(pos["gap"])}</div>',
             unsafe_allow_html=True,
         )
-        col_edit, col_job = st.columns(2)
+        st.space()
+        col_job, col_edit = st.columns(2)
         with col_edit:
             if st.button("✏️ تعديل", key=f"org_edit_pos_{pos['id']}", type="primary", width="stretch"):
                 _edit_position_dialog(pos["id"])
         with col_job:
-            if st.button("➕ وظيفة من الفجوة", key=f"org_mkjob_{pos['id']}", width="stretch"):
+            if st.button("➕وظيفة جديده", key=f"org_mkjob_{pos['id']}", width="stretch"):
                 _create_job_for_position(pos["id"])
 
         st.markdown('<div class="jb jb-section">📋 معلومات المسمى</div>', unsafe_allow_html=True)

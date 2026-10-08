@@ -15,6 +15,8 @@ def _job_context(job: Job) -> str:
         parts.append("المهارات المطلوبة: " + ", ".join(job.all_required_skills))
     if job.description:
         parts.append(f"الوصف: {job.description}")
+    if job.competency_weights:
+        parts.append("الكفاءات المعتمدة: " + ", ".join(job.competency_weights))
     return "\n".join(parts)
 
 

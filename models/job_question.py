@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.database import Base
@@ -19,6 +19,10 @@ class JobQuestion(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"), nullable=False, index=True)
+    # السؤال تابع لمقابلة واحدة فقط (NULL = سجل قديم من بنك الوظيفة، يُحوَّل عند التشغيل)
+    interview_id: Mapped[int | None] = mapped_column(ForeignKey("interviews.id"), nullable=True, index=True)
+    # إن كان السؤال مستورداً من مقابلة أخرى (للتتبع والمقارنة)
+    imported_from_interview_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     question: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str | None] = mapped_column(String(30), nullable=True)  # cv_specific/technical/behavioral/leadership أو null (يدوي)

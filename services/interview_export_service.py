@@ -13,13 +13,15 @@ from core.exceptions import DocumentParsingError, ValidationError
 from core.logging import get_logger
 
 if TYPE_CHECKING:  # للـ type hints فقط - بدون استيراد فعلي
+    from models.interview import Interview
     from models.job import Job
     from models.job_question import JobQuestion
 
-logger = get_logger(__name__)
 
+
+logger = get_logger(__name__)
 _QUESTION_MARKER_RE = re.compile(r"\[Q#(\d+)\]")
-_JOB_MARKER_RE = re.compile(r"\[JOB#(\d+)\]")
+_INTERVIEW_MARKER_RE = re.compile(r"\[INT#(\d+)\]")   # بدل _JOB_MARKER_RE
 _ANSWER_LABEL = "الإجابة:"
 _ANSWER_LABEL_RE = re.compile(r"^الإجابة\s*[:：]")
 _SEPARATOR_CHAR = "─"
@@ -73,14 +75,16 @@ def _add_hidden_marker(paragraph, marker: str) -> None:
     run.font.size = Pt(1)
     run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
 
-
-def export_questions_docx(job: "Job", questions: list["JobQuestion"]) -> bytes:
+def export_questions_docx(
+    interview: "Interview", job: "Job", candidate_name: str, questions: list["JobQuestion"]
+) -> bytes:
     """
-    يبني ملف Word فيه كل أسئلة بنك الوظيفة، وتحت كل سؤال مساحة لكتابة الإجابة.
+    يبني ملف Word فيه أسئلة هذه المقابلة فقط، وتحت كل سؤال مساحة لكتابة الإجابة.
+    الملف يحمل علامة المقابلة [INT#id] فلا يُقبل عند الاستيراد إلا في المقابلة نفسها.
     يرفع ValidationError إذا لم توجد أسئلة.
     """
     if not questions:
-        raise ValidationError("لا توجد أسئلة في بنك هذه الوظيفة لتصديرها. أضف أسئلة أولاً.")
+        raise ValidationError("لا توجد أسئلة في هذه المقابلة لتصديرها. أضف أسئلة أولاً.")
 
     import docx
 
@@ -89,21 +93,25 @@ def export_questions_docx(job: "Job", questions: list["JobQuestion"]) -> bytes:
     document.styles["Normal"].font.size = docx.shared.Pt(11)
 
     title = document.add_heading(level=1)
-    _add_hidden_marker(title, f"[JOB#{job.id}]")
-    _add_run(title, f"أسئلة مقابلة: {job.title}")
+    _add_hidden_marker(title, f"[INT#{interview.id}]")
+    _add_run(title, f"أسئلة مقابلة: {candidate_name} — {job.title}")
     _make_rtl(title)
 
+    when = interview.scheduled_at.strftime("%Y-%m-%d %H:%M") if interview.scheduled_at else "-"
     meta = document.add_paragraph()
-    details = " · ".join(p for p in (job.department, job.location) if p)
-    _add_run(meta, (details + " · " if details else "") + f"عدد الأسئلة: {len(questions)}", italic=True)
+    _add_run(
+        meta,
+        f"{interview.code or interview.id} · {interview.interview_type} · {when} · عدد الأسئلة: {len(questions)}",
+        italic=True,
+    )
     _make_rtl(meta)
 
     instructions = document.add_paragraph()
     _add_run(
         instructions,
         "تعليمات: اكتب إجابة المرشح مباشرة تحت كل سؤال في المساحة المخصصة. لا تحذف السؤال ولا "
-        "تغيّر ترتيب الأسئلة أو تنقل الإجابة إلى تحت سؤال آخر. بعد الانتهاء احفظ الملف وأعد رفعه "
-        "من صفحة «المقابلات» داخل بطاقة المقابلة لتصحيح الإجابات وتقييمها.",
+        "تغيّر ترتيب الأسئلة ولا تنقل الإجابة إلى تحت سؤال آخر. بعد الانتهاء احفظ الملف وأعد رفعه "
+        "من تبويب «⚙️ الإدارة» داخل نفس المقابلة لتصحيح الإجابات وتقييمها.",
         italic=True, size=10,
     )
     _make_rtl(instructions)
@@ -136,7 +144,6 @@ def export_questions_docx(job: "Job", questions: list["JobQuestion"]) -> bytes:
     document.save(buffer)
     return buffer.getvalue()
 
-
 # ------------------------------------------------------------------ الاستيراد
 
 def _extract_answer(lines: list[str]) -> str:
@@ -155,11 +162,10 @@ def _extract_answer(lines: list[str]) -> str:
     body = [line for line in body if set(line) != {_SEPARATOR_CHAR}]
     return "\n".join(body).strip()
 
-
-def parse_answers_docx(file_bytes: bytes, expected_job_id: int | None = None) -> dict[int, str]:
+def parse_answers_docx(file_bytes: bytes, expected_interview_id: int | None = None) -> dict[int, str]:
     """
     يقرأ ملف Word معبّأ ويرجع {question_id: answer_text} للأسئلة التي كُتبت لها إجابة فعلاً.
-    - expected_job_id: إن مُرِّر ووُجد معرّف وظيفة في الملف يجب أن يطابقه، وإلا ValidationError.
+    - expected_interview_id: إن مُرِّر ووُجدت علامة مقابلة في الملف يجب أن تطابقه، وإلا ValidationError.
     - يرفع DocumentParsingError إذا لم يكن الملف صالحاً أو لا يحتوي أي علامة سؤال.
     """
     try:
@@ -172,16 +178,16 @@ def parse_answers_docx(file_bytes: bytes, expected_job_id: int | None = None) ->
     except Exception as exc:
         raise DocumentParsingError(f"تعذّر فتح الملف كملف Word صالح: {exc}") from exc
 
-    file_job_id: int | None = None
+    file_interview_id: int | None = None
     sections: list[tuple[int, list[str]]] = []
     current_lines: list[str] | None = None
 
     for paragraph in document.paragraphs:
         text = paragraph.text.strip()
 
-        job_match = _JOB_MARKER_RE.search(text)
-        if job_match and file_job_id is None:
-            file_job_id = int(job_match.group(1))
+        interview_match = _INTERVIEW_MARKER_RE.search(text)
+        if interview_match and file_interview_id is None:
+            file_interview_id = int(interview_match.group(1))
 
         question_match = _QUESTION_MARKER_RE.search(text)
         if question_match:
@@ -198,8 +204,12 @@ def parse_answers_docx(file_bytes: bytes, expected_job_id: int | None = None) ->
             "دون إعادة تصميمه أو نسخ محتواه إلى ملف جديد."
         )
 
-    if expected_job_id is not None and file_job_id is not None and file_job_id != expected_job_id:
-        raise ValidationError("هذا الملف يخص وظيفة أخرى غير الوظيفة المحددة حالياً.")
+    if (
+        expected_interview_id is not None
+        and file_interview_id is not None
+        and file_interview_id != expected_interview_id
+    ):
+        raise ValidationError("هذا الملف يخص مقابلة أخرى غير المقابلة المحددة حالياً.")
 
     answers: dict[int, str] = {}
     for question_id, lines in sections:

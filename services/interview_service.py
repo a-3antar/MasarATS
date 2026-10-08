@@ -4,7 +4,7 @@
 from collections.abc import Callable
 from datetime import date
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from core.constants import INTERVIEW_DECISIONS, INTERVIEW_STATUSES, INTERVIEW_TYPES
@@ -18,7 +18,8 @@ from repositories.interview_answer_repository import InterviewAnswerRepository
 from repositories.interview_repository import InterviewRepository
 from repositories.job_question_repository import JobQuestionRepository
 from services.application_service import ApplicationService
-
+from datetime import date, datetime, timezone
+from models.job_question import JobQuestion
 
 logger = get_logger(__name__)
 
@@ -33,6 +34,9 @@ _MAX_PRIOR_ANSWER_CHARS = 800  # اقتطاع كل إجابة سابقة في ا
 _AI_DIMENSIONS = ("technical_knowledge", "problem_solving", "communication", "practical_experience")
 
 AUTO, MANUAL = "auto", "manual"
+
+def _naive(value: datetime | None) -> datetime | None:
+    return value.replace(tzinfo=None) if value is not None and value.tzinfo else value
 
 
 class InterviewService:
@@ -86,7 +90,13 @@ class InterviewService:
 
     def delete(self, interview_id: int) -> None:
         interview = self._get_or_raise(interview_id)
+        question_ids = self._session.scalars(
+            select(JobQuestion.id).where(JobQuestion.interview_id == interview_id)
+        ).all()
         self._session.execute(delete(InterviewAnswer).where(InterviewAnswer.interview_id == interview_id))
+        if question_ids:
+            self._session.execute(delete(InterviewAnswer).where(InterviewAnswer.question_id.in_(question_ids)))
+        self._session.execute(delete(JobQuestion).where(JobQuestion.interview_id == interview_id))
         self._interviews.delete(interview)
 
     def _get_or_raise(self, interview_id: int) -> Interview:
@@ -144,8 +154,9 @@ class InterviewService:
     def _get_or_create_answer(self, interview_id: int, question_id: int) -> InterviewAnswer:
         answer = self._answers.get_one(interview_id, question_id)
         if answer is None:
-            if self._job_questions.get_by_id(question_id) is None:
-                raise ValidationError("السؤال غير موجود.")
+            question = self._job_questions.get_by_id(question_id)
+            if question is None or question.interview_id != interview_id:
+                raise ValidationError("السؤال غير موجود في هذه المقابلة.")
             answer = InterviewAnswer(interview_id=interview_id, question_id=question_id)
             self._answers.add(answer)
         else:
@@ -222,7 +233,7 @@ class InterviewService:
         واحد لا يوقف الباقي. يرجع: {"saved","evaluated","failed","unknown","overall_score"}.
         """
         self._get_or_raise(interview_id)
-        valid_ids = {q.id for q in self._job_questions.get_for_job(job.id)}
+        valid_ids = {q.id for q in self._job_questions.get_for_interview(interview_id)}
 
         unknown = [qid for qid in answers_by_question if qid not in valid_ids]
         to_import = {qid: text for qid, text in answers_by_question.items() if qid in valid_ids}
@@ -259,7 +270,7 @@ class InterviewService:
         """
         answers = self.answers_map(interview_id)
         buckets: dict[str, list[int]] = {}
-        for question in self._job_questions.get_for_job(job.id):
+        for question in self._job_questions.get_for_interview(interview_id):
             name = (question.competency or "").strip()
             answer = answers.get(question.id)
             if name and answer is not None and answer.eval_score is not None:
@@ -330,3 +341,21 @@ class InterviewService:
         written = [a for a in answers if (a.answer or "").strip()]
         scored = [a for a in answers if a.eval_score is not None]
         return len(scored), len(written)
+
+    def previous_interviews(
+        self, application_id: int, before: datetime | None = None, exclude_id: int | None = None
+    ) -> list[dict]:
+        """مقابلات نفس المرشح لنفس الوظيفة قبل التاريخ المعطى (أو قبل الآن)، الأحدث أولاً، مع عدد الأيام."""
+        reference = _naive(before) or datetime.now(timezone.utc).replace(tzinfo=None)
+        rows = []
+        for iv in self._interviews.get_for_application(application_id):
+            when = _naive(iv.scheduled_at)
+            if iv.id == exclude_id or when is None or when >= reference or iv.status == "Cancelled":
+                continue
+            rows.append({
+                "id": iv.id, "code": iv.code or f"#{iv.id}", "type": iv.interview_type,
+                "date": when.strftime("%Y-%m-%d"), "days_before": (reference - when).days,
+                "score": iv.overall_score, "decision": iv.decision,
+            })
+        rows.sort(key=lambda r: r["date"], reverse=True)
+        return rows
