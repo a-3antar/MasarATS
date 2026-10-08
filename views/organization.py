@@ -320,8 +320,22 @@ def _filter_positions(positions: list[dict], f: dict) -> list[dict]:
 
 
 # ------------------------------------------------------------ تبويب المسميات (جدول + لوحة تفاصيل)
+def _table_key(rows: list[dict]) -> str:
+    """مفتاح يتغير بتغير الصفوف المعروضة (فلتر/بحث) فيُصفَّر التحديد القديم."""
+    return "org_positions_table_" + str(hash(tuple(r["id"] for r in rows)) & 0xFFFFFF)
 
-def _render_positions_table(rows: list[dict]) -> None:
+
+def _sync_selection(rows: list[dict], table_key: str) -> None:
+    """يقرأ الصف المحدد من الجدول قبل رسم اللوحة (حالة الـ widget متاحة من بداية الدورة)."""
+    try:
+        picked = st.session_state[table_key]["selection"]["rows"]
+    except (KeyError, TypeError):
+        return
+    if picked and picked[0] < len(rows):
+        st.session_state[_SELECTED_POS_KEY] = rows[picked[0]]["id"]
+
+
+def _render_positions_table(rows: list[dict], table_key: str) -> None:
     data = [
         {
             "المسمى": p["title"],
@@ -338,17 +352,31 @@ def _render_positions_table(rows: list[dict]) -> None:
         }
         for p in rows
     ]
-    event = st.dataframe(
+    st.dataframe(
         pd.DataFrame(data), width="stretch", hide_index=True,
-        on_select="rerun", selection_mode="single-row", key="org_positions_table",
+        on_select="rerun", selection_mode="single-row", key=table_key,
         column_config={
             "التغطية": st.column_config.ProgressColumn("التغطية", format="%d%%", min_value=0, max_value=_FULL_PCT),
         },
     )
-    picked = event.selection.rows
-    if picked and picked[0] < len(rows):
-        st.session_state[_SELECTED_POS_KEY] = rows[picked[0]]["id"]
 
+
+def _render_positions_tab(rows: list[dict]) -> None:
+    if not rows:
+        st.info("لا توجد مسميات مطابقة للبحث والفلاتر الحالية.")
+        return
+    table_key = _table_key(rows)
+    _sync_selection(rows, table_key)  # قبل تحديد اللوحة، وهذا هو الإصلاح
+
+    by_id = {r["id"]: r for r in rows}
+    selected = by_id.get(st.session_state.get(_SELECTED_POS_KEY)) or rows[0]
+
+    main, side = st.columns([3, 1.15], gap="medium")
+    with main:
+        _render_positions_table(rows, table_key)
+        st.caption(f"إجمالي المسميات: {len(rows)} — اضغط على أي صف لعرض تفاصيله والبحث عن مرشحين.")
+    with side:
+        _render_position_panel(selected)
 
 def _render_position_panel(pos: dict) -> None:
     with st.container(border=True):
@@ -388,21 +416,6 @@ def _render_position_panel(pos: dict) -> None:
         _render_candidate_search(pos, "pos")
 
 
-def _render_positions_tab(rows: list[dict]) -> None:
-    if not rows:
-        st.info("لا توجد مسميات مطابقة للبحث والفلاتر الحالية.")
-        return
-    by_id = {r["id"]: r for r in rows}
-    selected = by_id.get(st.session_state.get(_SELECTED_POS_KEY)) or rows[0]
-
-    main, side = st.columns([3, 1.15], gap="medium")
-    with main:
-        _render_positions_table(rows)
-        st.caption(f"إجمالي المسميات: {len(rows)} — اضغط على أي صف لعرض تفاصيله والبحث عن مرشحين.")
-    with side:
-        _render_position_panel(selected)
-
-
 # ------------------------------------------------------------ تبويب الفجوات
 
 def _render_gap_tab(rows: list[dict]) -> None:
@@ -426,13 +439,19 @@ def _render_gap_tab(rows: list[dict]) -> None:
 
 
 # ------------------------------------------------------------ تبويبا الشجرة والأقسام
+_TREE_MODES = {"🏢 حسب الأقسام": "departments", "🔗 حسب خطوط التبعية": "reporting"}
+
 
 def _render_tree_tab(overview: dict) -> None:
     if not overview["departments"] and not overview["positions"]:
         st.info("أضف أقساماً ومسميات وظيفية أولاً لعرض الهيكل التنظيمي.")
         return
-    st.markdown(ui.tree_html(overview["departments"], overview["positions"]), unsafe_allow_html=True)
-
+    label = st.radio("طريقة العرض", list(_TREE_MODES), horizontal=True, key="org_tree_mode")
+    st.markdown(
+        ui.tree_html(overview["departments"], overview["positions"], _TREE_MODES[label]),
+        unsafe_allow_html=True,
+    )
+    st.caption("«↗ يتبع» تعني أن رئيس المسمى في قسم آخر. و👑 مدير القسم.")
 
 def _render_departments_tab(overview: dict) -> None:
     departments = overview["departments"]

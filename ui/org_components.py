@@ -64,52 +64,73 @@ def score_row(name: str, subtitle: str, score: float) -> str:
         f'<div class="og-bar"><div class="og-bar-fill" style="width:{pct}%;background:{color}"></div></div></div>'
     )
 
-
-def _position_node(pos: dict, by_boss: dict, seen: frozenset) -> str:
+def _position_node(pos: dict, by_boss: dict, seen: frozenset,
+                   same_dept_only: bool = True, show_dept: bool = False) -> str:
     seen = seen | {pos["id"]}
-    children = "".join(
-        _position_node(child, by_boss, seen) for child in by_boss.get(pos["id"], []) if child["id"] not in seen
-    )
+    kids = [
+        c for c in by_boss.get(pos["id"], [])
+        if c["id"] not in seen and (not same_dept_only or c["department_id"] == pos["department_id"])
+    ]
+    children = "".join(_position_node(c, by_boss, seen, same_dept_only, show_dept) for c in kids)
     jobs_note = f" · 💼 {pos['active_jobs']}" if pos["active_jobs"] else ""
     crown = "👑 " if pos.get("is_manager") else ""
     warn = " ⚠️" if pos.get("warnings") else ""
+    dept_note = f' <span class="jb-muted">· 🏢 {_esc(pos["department"])}</span>' if show_dept and pos["department"] else ""
+    # مسمى جذر في قسمه لكن رئيسه في قسم آخر: نعرض اسم رئيسه
+    ext_note = f' <span class="jb-muted">↗ يتبع: {_esc(pos["reports_to"])}</span>' if pos.get("_ext") else ""
     classes = "og-node" + (" og-manager" if pos.get("is_manager") else "") + (" og-warn" if pos.get("warnings") else "")
     tooltip = html.escape(" | ".join(pos.get("warnings") or []), quote=True)
     node = (
-        f'<div class="{classes}" title="{tooltip}"><span>{crown}👤 {_esc(pos["title"])}{warn}</span>'
+        f'<div class="{classes}" title="{tooltip}"><span>{crown}👤 {_esc(pos["title"])}{warn}{dept_note}{ext_note}</span>'
         f'{gap_badge(pos["gap"])}'
         f'<span class="og-count">{pos["current"]}/{pos["required"]}{jobs_note}</span></div>'
     )
     return node + (f'<div class="og-children">{children}</div>' if children else "")
 
 
-def tree_html(departments: list[dict], positions: list[dict]) -> str:
-    """شجرة الأقسام والمسميات: المسميات الجذرية تحت قسمها، والتابعون تحت مسمى مديرهم."""
+def tree_html(departments: list[dict], positions: list[dict], mode: str = "departments") -> str:
+    """mode='departments': قسم ← مسمياته (الأبناء من نفس القسم فقط). mode='reporting': خطوط التبعية عبر الأقسام."""
+    by_boss: dict = {}
+    for pos in positions:
+        by_boss.setdefault(pos["reports_to_id"], []).append(pos)
+
+    if mode == "reporting":
+        roots = by_boss.get(None, [])
+        body = "".join(_position_node(p, by_boss, frozenset(), same_dept_only=False, show_dept=True) for p in roots)
+        return f'<div class="jb">{body}</div>'
+
     dept_children: dict = {}
     for dept in departments:
         dept_children.setdefault(dept["parent_id"], []).append(dept)
     by_dept: dict = {}
-    by_boss: dict = {}
+    dept_of = {p["id"]: p["department_id"] for p in positions}
     for pos in positions:
         by_dept.setdefault(pos["department_id"], []).append(pos)
-        by_boss.setdefault(pos["reports_to_id"], []).append(pos)
 
     def department_node(dept: dict) -> str:
-        roots = "".join(
-            _position_node(p, by_boss, frozenset()) for p in by_dept.get(dept["id"], []) if p["reports_to_id"] is None
-        )
+        roots = []
+        for p in by_dept.get(dept["id"], []):
+            boss = p["reports_to_id"]
+            if boss is None:
+                roots.append(p)
+            elif dept_of.get(boss) != dept["id"]:
+                roots.append({**p, "_ext": True})  # رئيسه في قسم آخر
+        body_roots = "".join(_position_node(p, by_boss, frozenset()) for p in roots)
         subs = "".join(department_node(child) for child in dept_children.get(dept["id"], []))
         manager = f' · 👑 {_esc(dept["manager"])}' if dept.get("manager") else ""
         head = (
             f'<div class="og-node og-dept"><span>🏢 {_esc(dept["name"])}{manager}</span>'
             f'<span class="og-count">🧑‍💼 {dept["positions"]} · 💼 {dept["jobs"]}</span></div>'
         )
-        body = roots + subs
+        body = body_roots + subs
         return head + (f'<div class="og-children">{body}</div>' if body else "")
 
     parts = [department_node(d) for d in dept_children.get(None, [])]
-    orphans = [p for p in positions if p["department_id"] is None and p["reports_to_id"] is None]
+    orphans = [p for p in positions if p["department_id"] is None]
     if orphans:
         parts.append('<div class="og-node og-dept"><span>🧑‍💼 مسميات بدون قسم</span></div>')
-        parts.append(f'<div class="og-children">{"".join(_position_node(p, by_boss, frozenset()) for p in orphans)}</div>')
+        parts.append(
+            f'<div class="og-children">'
+            f'{"".join(_position_node(p, by_boss, frozenset(), same_dept_only=False) for p in orphans if p["reports_to_id"] is None)}</div>'
+        )
     return f'<div class="jb">{"".join(parts)}</div>'

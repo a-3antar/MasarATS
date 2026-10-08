@@ -58,11 +58,14 @@ _NEW_ACTIONS = [
     ("🗓️ جدولة مقابلة", "interviews", {}),
     ("📨 إنشاء عرض", "offers", {OPEN_CREATE_OFFER: True}),
 ]
-
-
-def _set_remember_cookie(user_id: int, token: str) -> None:
+def _set_remember_cookie(user_id: int, token: str) -> bool:
+    """يكتب كوكيز "تذكرني". يرجع False إن لم يكن الـ controller جاهزاً بعد (يُعاد المحاولة في الدورة التالية)."""
     if not _COOKIES_AVAILABLE:
-        return
+        return True
+
+    # getAll() تُهيّئ القاموس الداخلي للـ controller؛ قبلها يكون None ويفشل set() بـ TypeError
+    if _cookies.getAll() is None:
+        return False
 
     max_age = REMEMBER_TOKEN_DAYS * 24 * 3600
     payload = json.dumps(
@@ -70,7 +73,11 @@ def _set_remember_cookie(user_id: int, token: str) -> None:
         separators=(",", ":"),
     )
 
-    _cookies.set(_COOKIE_AUTH, payload, max_age=max_age)
+    try:
+        _cookies.set(_COOKIE_AUTH, payload, max_age=max_age)
+    except TypeError:
+        return False
+    return True
 
 
 def _clear_remember_cookie() -> None:
@@ -81,11 +88,16 @@ def _clear_remember_cookie() -> None:
 
 
 def _apply_pending_remember_cookie() -> None:
-    pending = st.session_state.pop(_PENDING_REMEMBER_KEY, None)
-    if pending:
-        _set_remember_cookie(*pending)
+    pending = st.session_state.get(_PENDING_REMEMBER_KEY)
+    if not pending:
+        return
+
+    if _set_remember_cookie(*pending):
+        st.session_state.pop(_PENDING_REMEMBER_KEY, None)
         time.sleep(0.5)
         st.rerun()
+    # غير ذلك: نُبقي القيمة المعلّقة، وسيُعاد المحاولة تلقائياً عند الـ rerun
+    # التالي الذي يُطلقه المكوّن بعد وصول الكوكيز من المتصفح.
 
 
 def _try_auto_login() -> None:
