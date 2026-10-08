@@ -298,12 +298,15 @@ def _render_warnings(warnings: list[dict]) -> None:
             (st.error if w["level"] == "error" else st.warning)(w["text"], icon="🚨" if w["level"] == "error" else "⚠️")
 
 def _render_filter_bar(overview: dict) -> dict:
-    col_search, col_dept, col_gap = st.columns([3, 2, 1.3])
+    st.space()
+    col_search, col_dept, col_gap = st.columns([3, 2, 1.3], vertical_alignment="center")
     query = col_search.text_input(
-        "بحث", key="org_search_q", label_visibility="collapsed", placeholder="🔎 ابحث بالمسمى أو القسم..."
+        "بحث", key="org_search_q", label_visibility="collapsed",
+        placeholder="🔎 ابحث بالمسمى أو القسم...",
     )
     departments = col_dept.multiselect(
-        "القسم", [d["name"] for d in overview["departments"]], key="org_f_dept", placeholder="القسم"
+        "القسم", [d["name"] for d in overview["departments"]], key="org_f_dept",
+        placeholder="🏢 كل الأقسام", label_visibility="collapsed",
     )
     only_gap = col_gap.toggle("ذات فجوة فقط", key="org_f_gap")
     return {"query": query, "departments": departments, "only_gap": only_gap}
