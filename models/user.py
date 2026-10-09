@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.enums import UserRole
@@ -28,12 +28,17 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), nullable=False, default=UserRole.RECRUITER.value)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    # دعم خاصية "تذكرني": توكن عشوائي مشفّر بنفس آلية كلمة المرور (bcrypt) - وليس كلمة
-    # المرور نفسها أبداً. يُخزَّن في كوكيز المتصفح فقط uid + التوكن الخام، وهذا العمود
-    # يحمل الـ hash فقط، تماماً كما يُخزَّن password_hash. تغيير كلمة المرور لا يمسحه
-    # تلقائياً في هذه المرحلة - يمكن إبطاله يدوياً من الإعدادات لاحقاً إن لزم.
+    # صلاحيات صفحات مخصصة لهذا المستخدم (مفاتيح الصفحات). NULL = الافتراضي حسب الدور.
+    allowed_pages: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    # "تذكرني": hash فقط (bcrypt) وليس التوكن الخام.
     remember_token_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     remember_token_expires: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # استعادة كلمة المرور: hash لكود من 6 أرقام + انتهاء + عدد المحاولات الخاطئة
+    reset_code_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reset_code_expires: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reset_attempts: Mapped[int | None] = mapped_column(Integer, default=0, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

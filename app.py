@@ -3,7 +3,7 @@ SmartATS AI - نقطة الدخول الرئيسية.
 
 تحتوي هذه الطبقة على:
 - تهيئة قاعدة البيانات
-- تسجيل الدخول / إنشاء حساب جديد (مع خيار "تذكرني")
+- تسجيل الدخول / إنشاء حساب جديد / نسيت كلمة المرور (مع خيار "تذكرني")
 - الشريط الجانبي (التنقل + قائمة «＋ جديد» العامة) وتوجيه الصفحات
 
 لا تحتوي هذه الطبقة (app.py) على أي منطق أعمال أو استعلامات قاعدة بيانات
@@ -50,6 +50,7 @@ except ImportError:
 
 _COOKIE_AUTH = "smartats_auth"
 _PENDING_REMEMBER_KEY = "_pending_remember"
+_RESET_EMAIL_KEY = "_reset_email"
 
 # إجراءات قائمة «＋ جديد»: (النص، مفتاح الصفحة، قيم session_state). لا نعرض إلا ما هو مدعوم فعلاً.
 _NEW_ACTIONS = [
@@ -59,6 +60,19 @@ _NEW_ACTIONS = [
     ("🗓️ جدولة مقابلة", "interviews", {}),
     ("📨 إنشاء عرض", "offers", {OPEN_CREATE_OFFER: True}),
 ]
+
+
+def _session_user(user) -> dict:
+    """بيانات المستخدم المحفوظة في session_state (بما فيها الصفحات المخصصة إن وُجدت)."""
+    return {
+        "id": user.id,
+        "username": user.username,
+        "full_name": user.full_name,
+        "role": user.role,
+        "allowed_pages": user.allowed_pages,
+    }
+
+
 def _set_remember_cookie(user_id: int, token: str) -> bool:
     """يكتب كوكيز "تذكرني". يرجع False إن لم يكن الـ controller جاهزاً بعد (يُعاد المحاولة في الدورة التالية)."""
     if not _COOKIES_AVAILABLE:
@@ -123,17 +137,13 @@ def _try_auto_login() -> None:
         with get_db_session() as session:
             user = AuthService(session).authenticate_by_token(uid, token)
             if user is not None:
-                st.session_state.user = {
-                    "id": user.id,
-                    "username": user.username,
-                    "full_name": user.full_name,
-                    "role": user.role,
-                }
+                st.session_state.user = _session_user(user)
             else:
                 _clear_remember_cookie()
 
     except (ValueError, TypeError, KeyError, json.JSONDecodeError, SmartATSError):
         _clear_remember_cookie()
+
 
 def _init_session_state() -> None:
     if "user" not in st.session_state:
@@ -142,11 +152,51 @@ def _init_session_state() -> None:
     _try_auto_login()
 
 
+def _forgot_password_view() -> None:
+    """خطوتان: (1) إرسال كود للبريد  (2) إدخال الكود وكلمة المرور الجديدة."""
+    email = st.session_state.get(_RESET_EMAIL_KEY)
+
+    if not email:
+        with st.form("forgot_form"):
+            entered = st.text_input("البريد الإلكتروني المسجّل")
+            submitted = st.form_submit_button("📧 إرسال كود الاستعادة", width='stretch')
+        if submitted:
+            try:
+                with get_db_session() as session:
+                    AuthService(session).request_password_reset(entered)
+                st.session_state[_RESET_EMAIL_KEY] = entered.strip().lower()
+                st.rerun()
+            except SmartATSError as exc:
+                st.error(str(exc))
+        return
+
+    st.info(f"إن كان «{email}» مسجّلاً فقد أُرسل إليه كود من 6 أرقام (صالح 30 دقيقة).")
+    with st.form("reset_form"):
+        code = st.text_input("الكود المرسل للبريد")
+        new_password = st.text_input("كلمة المرور الجديدة", type="password")
+        confirm = st.text_input("تأكيد كلمة المرور الجديدة", type="password")
+        submitted = st.form_submit_button("🔑 تعيين كلمة المرور", width='stretch')
+    if submitted:
+        if new_password != confirm:
+            st.error("كلمتا المرور غير متطابقتين.")
+        else:
+            try:
+                with get_db_session() as session:
+                    AuthService(session).reset_password_with_code(email, code, new_password)
+                st.session_state.pop(_RESET_EMAIL_KEY, None)
+                st.success("تم تغيير كلمة المرور ✅ يمكنك تسجيل الدخول الآن من تبويب «تسجيل الدخول».")
+            except SmartATSError as exc:
+                st.error(str(exc))
+    if st.button("↩️ إرسال كود جديد / تغيير البريد", key="reset_back"):
+        st.session_state.pop(_RESET_EMAIL_KEY, None)
+        st.rerun()
+
+
 def _login_view() -> None:
     st.title("🧩 SmartATS AI")
     st.caption("نظام إدارة التوظيف المدعوم بالذكاء الاصطناعي")
 
-    tab_login, tab_register = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
+    tab_login, tab_register, tab_forgot = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد", "نسيت كلمة المرور"])
 
     with tab_login:
         with st.form("login_form"):
@@ -165,12 +215,7 @@ def _login_view() -> None:
                 with get_db_session() as session:
                     auth_service = AuthService(session)
                     user = auth_service.authenticate(username, password)
-                    st.session_state.user = {
-                        "id": user.id,
-                        "username": user.username,
-                        "full_name": user.full_name,
-                        "role": user.role,
-                    }
+                    st.session_state.user = _session_user(user)
                     token = None
                     if remember_me and _COOKIES_AVAILABLE:
                         token = auth_service.create_remember_token(user.id)
@@ -213,13 +258,15 @@ def _login_view() -> None:
                 except SmartATSError as exc:
                     st.error(str(exc))
 
+    with tab_forgot:
+        _forgot_password_view()
+
 
 def _render_new_menu() -> None:
     """قائمة «＋ جديد» العامة: وصول مباشر لأهم الإجراءات من أي صفحة."""
     with st.popover("＋ جديد"):
         for index, (label, page_key, state) in enumerate(_NEW_ACTIONS):
             st.button(label, key=f"new_action_{index}", on_click=go_to, args=(page_key,), kwargs=state)
-
 
 
 def main() -> None:
@@ -229,10 +276,12 @@ def main() -> None:
     else:
         _authenticated_view()
 
+
 def _authenticated_view() -> None:
     user = st.session_state.user
     role = user["role"]
-    pages = {label: key for label, key in PAGES.items() if can_access_page(role, key)}
+    allowed = user.get("allowed_pages")
+    pages = {label: key for label, key in PAGES.items() if can_access_page(role, key, allowed)}
 
     current = st.session_state.get(NAV_KEY)
     if current not in pages:
@@ -256,6 +305,7 @@ def _authenticated_view() -> None:
 
     # اسم الصفحة = اسم الوحدة داخل views/ وكلها تعرّف render()
     importlib.import_module(f"views.{pages[selected_page]}").render()
+
 
 if __name__ == "__main__":
     main()

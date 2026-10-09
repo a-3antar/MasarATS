@@ -20,6 +20,8 @@ PAGES: dict[str, str] = {
     "🏢 الهيكل التنظيمي": "organization",
     "📊 لوحة المعلومات": "dashboard",
     "📈 التقارير": "reports",
+    "🔑 حسابي": "account",
+    "👥 المستخدمون": "users",
 }
 _LABEL_BY_KEY = {key: label for label, key in PAGES.items()}
 

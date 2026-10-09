@@ -11,7 +11,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
 class Settings(BaseSettings):
     """إعدادات التطبيق. تُملأ تلقائياً من ملف .env أو متغيرات البيئة."""
 
@@ -31,11 +30,17 @@ class Settings(BaseSettings):
 
     # الذكاء الاصطناعي
     gemini_api_key: str = ""
-    # مفتاح ثانٍ اختياري للتبديل الدوري (round-robin) بين مفتاحين لتوزيع الحمل
-    # وتفادي تجاوز حدود الحصة عند المعالجة المتوازية لعدة سير ذاتية.
     alt_gemini_api_key: str = Field(default="", validation_alias="ALT_GEMINI_KEY")
     ai_model: str = "gemini-flash-lite-latest"
     ai_temperature: float = 0.2
+
+    # البريد (SMTP)
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = "learningosra@gmail.com"
+    smtp_password: str = "ljxt exee hqan aykq"
+    smtp_from: str = "learningosra@gmail.com"
+    smtp_use_tls: bool = True
 
     @property
     def is_development(self) -> bool:
@@ -45,6 +50,11 @@ class Settings(BaseSettings):
     def ai_enabled(self) -> bool:
         """هل يوجد أي مفتاح Gemini مضبوط (الرئيسي أو الاحتياطي)؟"""
         return bool(self.gemini_api_key or self.alt_gemini_api_key)
+
+    @property
+    def email_enabled(self) -> bool:
+        """هل إعدادات SMTP كافية لإرسال البريد؟"""
+        return bool(self.smtp_host and (self.smtp_from or self.smtp_user))
 
 
 @lru_cache
