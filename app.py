@@ -22,6 +22,7 @@ from database.database import get_db_session, init_db
 from services.auth_service import REMEMBER_TOKEN_DAYS, AuthService
 from ui.navigation import NAV_KEY, OPEN_CREATE_JOB, OPEN_CREATE_OFFER, PAGES, go_to
 from ui.assistant import render_sidebar_assistant
+from core.permissions import can_access_page, can_modify
 
 
 st.set_page_config(page_title="SmartATS AI", page_icon="🧩", layout="wide")
@@ -220,25 +221,6 @@ def _render_new_menu() -> None:
             st.button(label, key=f"new_action_{index}", on_click=go_to, args=(page_key,), kwargs=state)
 
 
-def _authenticated_view() -> None:
-    user = st.session_state.user
-
-    with st.sidebar:
-        st.markdown(f"**{user['full_name']}**")
-        st.caption(f"@{user['username']} · {user['role']}")
-        _render_new_menu()
-        render_sidebar_assistant()
-        st.divider()
-        selected_page = st.radio("التنقل", list(PAGES.keys()), label_visibility="collapsed", key=NAV_KEY)
-        st.divider()
-        if st.button("تسجيل الخروج", width='stretch'):
-            _clear_remember_cookie()
-            st.session_state.user = None
-            st.rerun()
-
-    # اسم الصفحة = اسم الوحدة داخل views/ وكلها تعرّف render()
-    importlib.import_module(f"views.{PAGES[selected_page]}").render()
-
 
 def main() -> None:
     _init_session_state()
@@ -247,6 +229,33 @@ def main() -> None:
     else:
         _authenticated_view()
 
+def _authenticated_view() -> None:
+    user = st.session_state.user
+    role = user["role"]
+    pages = {label: key for label, key in PAGES.items() if can_access_page(role, key)}
+
+    current = st.session_state.get(NAV_KEY)
+    if current not in pages:
+        if current in PAGES:  # انتقال برمجي (go_to) لصفحة غير مسموحة
+            st.toast("ليست لديك صلاحية الوصول لهذه الصفحة.")
+        st.session_state[NAV_KEY] = next(iter(pages))
+
+    with st.sidebar:
+        st.markdown(f"**{user['full_name']}**")
+        st.caption(f"@{user['username']} · {role}")
+        if can_modify(role):
+            _render_new_menu()
+            render_sidebar_assistant()
+        st.divider()
+        selected_page = st.radio("التنقل", list(pages), label_visibility="collapsed", key=NAV_KEY)
+        st.divider()
+        if st.button("تسجيل الخروج", width='stretch'):
+            _clear_remember_cookie()
+            st.session_state.user = None
+            st.rerun()
+
+    # اسم الصفحة = اسم الوحدة داخل views/ وكلها تعرّف render()
+    importlib.import_module(f"views.{pages[selected_page]}").render()
 
 if __name__ == "__main__":
     main()

@@ -501,15 +501,19 @@ def render() -> None:
         st.info("ابدأ بإضافة قسم ثم مسميات وظيفية لبناء الهيكل التنظيمي.")
         return
 
+    _render_warnings(overview["warnings"])
     rows = _filter_positions(overview["positions"], _render_filter_bar(overview))
 
-    tab_positions, tab_gap, tab_tree, tab_depts = st.tabs(
-        ["🧑‍💼 المسميات الوظيفية", "⚠️ فجوة القوى العاملة", "🌳 الشجرة التنظيمية", "🏢 الأقسام"]
+    tab_positions, tab_gap, tab_study, tab_tree, tab_depts = st.tabs(
+        ["🧑‍💼 المسميات الوظيفية", "⚠️ فجوة القوى العاملة", "📋 دراسة الاحتياج",
+         "🌳 الشجرة التنظيمية", "🏢 الأقسام"]
     )
     with tab_positions:
         _render_positions_tab(rows)
     with tab_gap:
         _render_gap_tab(rows)
+    with tab_study:
+        _render_study_tab(overview)
     with tab_tree:
         _render_tree_tab(overview)
     with tab_depts:

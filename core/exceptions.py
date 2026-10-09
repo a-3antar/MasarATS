@@ -50,3 +50,6 @@ class AIServiceError(SmartATSError):
 
 class DuplicateCandidateError(SmartATSError):
     """تم اكتشاف مرشح مكرر محتمل."""
+
+class PermissionDeniedError(SmartATSError):
+    """المستخدم لا يملك صلاحية تنفيذ هذا الإجراء."""

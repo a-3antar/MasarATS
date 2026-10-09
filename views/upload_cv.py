@@ -154,12 +154,11 @@ def _run_batch(uploaded_files) -> None:
         pass
     st.rerun()
 
-
 def render() -> None:
     st.header("📄 رفع سير ذاتية")
     st.caption("ارفع ملفات السير الذاتية وسيستخرج النظام بيانات المرشحين تلقائياً.")
 
-    if not get_settings().gemini_api_key:
+    if not get_settings().ai_enabled:
         st.warning(
             "لم يتم ضبط GEMINI_API_KEY — سيتم استخراج البريد والهاتف فقط بدون فهم ذكي للمحتوى. "
             "يمكنك مراجعة البيانات وتعديلها يدوياً بعد الرفع.",

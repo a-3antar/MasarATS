@@ -196,7 +196,7 @@ class CandidateService:
 
     @staticmethod
     def _ai_available() -> bool:
-        return bool(get_settings().gemini_api_key)
+        return get_settings().ai_enabled
 
     @staticmethod
     def _compute_file_hash(file_path: str) -> str:

@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     def is_development(self) -> bool:
         return self.app_env.lower() == "development"
 
+    @property
+    def ai_enabled(self) -> bool:
+        """هل يوجد أي مفتاح Gemini مضبوط (الرئيسي أو الاحتياطي)؟"""
+        return bool(self.gemini_api_key or self.alt_gemini_api_key)
+
 
 @lru_cache
 def get_settings() -> Settings:
