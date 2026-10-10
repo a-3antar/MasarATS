@@ -12,7 +12,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from config.settings import get_settings
 from core.logging import get_logger
-
+from database.guards import register_session_guards  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -49,6 +49,7 @@ engine = _build_engine()
 # هذا آمن هنا لأننا لا نُعدّل نفس الكائن عبر جلسة أخرى لاحقاً قبل إعادة قراءته من القاعدة.
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
+register_session_guards(SessionLocal)
 
 def _add_missing_columns() -> None:
     """

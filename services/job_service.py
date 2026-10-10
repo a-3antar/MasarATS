@@ -13,6 +13,7 @@ from models.job_question import JobQuestion
 from repositories.application_repository import ApplicationRepository
 from repositories.job_repository import JobRepository
 from repositories.organization_repository import DepartmentRepository, PositionRepository
+from core.auth_context import enforce_bulk
 
 # الحقول المسموح تعديلها من الواجهة (قائمة بيضاء)
 _EDITABLE_FIELDS = {
@@ -183,7 +184,8 @@ class JobService:
         return self._jobs.get_by_id(job_id)
 
     def delete_job(self, job_id: int) -> None:
-        """يحذف الوظيفة وكل التقديمات وأسئلة بنك الوظيفة وإجاباتها المرتبطة بها."""
+        """يحذف الوظيفة وكل التقديمات وأسئلة بنك الوظيفة وإجاباتها المرتبطة بها (للأدمن فقط)."""
+        enforce_bulk()  # حذف وظيفة يحذف سجلات كثيرة مرتبطة بها: من صلاحيات الأدمن فقط
         job = self._get_or_raise(job_id)
         self._applications.delete_for_job(job_id)
 

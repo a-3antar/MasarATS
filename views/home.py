@@ -11,6 +11,7 @@ from services.home_service import AttentionItem, HomeService
 from ui import components
 from ui import job_components as jobs_ui
 from ui.navigation import OPEN_CREATE_JOB, OPEN_CREATE_OFFER, go_to
+from ui.guards import can_edit
 
 _CACHE_TTL = 15
 _ASK_KEY = "home_ask_query"
@@ -209,24 +210,28 @@ def _render_attention(items: list[AttentionItem]) -> None:
 
 
 # ------------------------------------------------------------ الصفحة
-
 def render() -> None:
     jobs_ui.inject_css()
     user = st.session_state.get("user") or {}
     data = _home_data()
+    editable = can_edit()
 
     st.title("🧩 SmartATS AI")
     st.markdown(f"### مرحباً {user.get('full_name', '')} 👋 — ماذا تريد أن تفعل اليوم؟")
     _render_ask_box()
 
     if data["is_new_workspace"]:
-        _render_quick_actions()
-        _render_onboarding()
+        if editable:
+            _render_quick_actions()
+            _render_onboarding()
+        else:
+            st.info("لا توجد بيانات في النظام بعد.")
         return
 
-    if not all(data["setup"].values()):
-        _render_setup_checklist(data["setup"])
-    _render_quick_actions()
+    if editable:
+        if not all(data["setup"].values()):
+            _render_setup_checklist(data["setup"])
+        _render_quick_actions()
 
     st.divider()
     _render_metrics(data["kpis"])

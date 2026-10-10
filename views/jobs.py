@@ -21,6 +21,7 @@ from services.job_service import JobService
 from services.organization_service import OrganizationService
 from ui import job_components as ui
 from views import job_candidates
+from ui.guards import is_admin
 
 # نفس فئات مهارات المرشح حتى تكون المطابقة متناسقة
 _LIST_FIELDS: list[tuple[str, str]] = [
@@ -406,7 +407,8 @@ def _render_job_details_tab(job_id: int, job: Job) -> None:
     confirm = st.checkbox(
         "أؤكد حذف هذه الوظيفة وكل التقديمات المرتبطة بها نهائياً", key=f"confirm_delete_{job_id}"
     )
-    if st.button("🗑️ حذف الوظيفة", disabled=not confirm, key=f"delete_job_{job_id}"):
+    if st.button("🗑️ حذف الوظيفة", disabled=not (confirm and is_admin()), key=f"delete_job_{job_id}",
+                 help=None if is_admin() else "حذف الوظيفة من صلاحيات الأدمن فقط."):
         try:
             with get_db_session() as session:
                 JobService(session).delete_job(job_id)

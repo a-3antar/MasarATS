@@ -21,6 +21,7 @@ from services.export_service import ExportService
 from services.search_service import SearchService
 from ui import components
 from views import candidate_profile
+from ui.guards import can_edit
 
 _LIST_TTL = 30                  # ثوانٍ - كاش قائمة المرشحين
 _THUMB_PX = 48                  # حجم الصورة الرمزية في الجدول
@@ -269,7 +270,7 @@ def _render_toolbar(data: dict) -> tuple[str, bool]:
             placeholder="صف المرشح الذي تحتاجه بجملة عادية..." if smart
             else "ابحث بالاسم أو البريد أو الهاتف أو المسمى الوظيفي...",
         )
-        with col_add.popover("➕ إضافة مرشح"):
+        with col_add.popover("➕ إضافة مرشح", disabled=not can_edit()):
             _render_manual_form()
 
         c1, c2, c3, c4, c5, c6 = st.columns([1.3, 1.3, 1.6, 1.3, 1.6, 1.2])
@@ -355,7 +356,7 @@ def _render_empty_database() -> None:
         "👥", "لا يوجد مرشحون بعد", "ابدأ ببناء قاعدة المرشحين: ارفع سيراً ذاتية وسيستخرج النظام بياناتها تلقائياً.",
         [("📄 رفع سيرة ذاتية", "upload_cv", None)], key="cand_empty_db",
     )
-    with st.popover("👤 أو أضف مرشحاً يدوياً"):
+    with st.popover("👤 أو أضف مرشحاً يدوياً", disabled=not can_edit()):
         _render_manual_form()
 
 
