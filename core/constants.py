@@ -98,3 +98,7 @@ SECONDS_PER_DAY: int = 86_400
 # الصلاحيات: حدود العمليات الكمية لغير الأدمن
 BULK_DELETE_LIMIT: int = 2           # أقصى عدد سجلات تُحذف في عملية واحدة
 RECRUITER_MAX_UPLOAD_FILES: int = 5  # أقصى عدد سير ذاتية في دفعة رفع واحدة
+
+# درجة المطابقة: عتبتان فقط في كل المشروع (تستخدمهما ui/theme.py)
+SCORE_GOOD: float = 75.0
+SCORE_MID: float = 50.0

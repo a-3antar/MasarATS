@@ -24,6 +24,7 @@ from ui.navigation import NAV_KEY, OPEN_CREATE_JOB, OPEN_CREATE_OFFER, PAGES, go
 from ui.assistant import render_sidebar_assistant
 from core.permissions import can_access_page, can_modify
 from ui.readonly import install_readonly_guard
+from ui.theme import inject_theme
 
 st.set_page_config(page_title="SmartATS AI", page_icon="🧩", layout="wide")
 
@@ -270,6 +271,7 @@ def _render_new_menu() -> None:
 
 
 def main() -> None:
+    inject_theme()
     install_readonly_guard()
     _init_session_state()
     if st.session_state.user is None:
