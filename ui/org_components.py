@@ -4,7 +4,7 @@ import html
 
 import streamlit as st
 
-from ui import job_components
+from ui import components, job_components
 
 _COLOR_OK, _COLOR_WARN, _COLOR_BAD = "#16a34a", "#d97706", "#dc2626"
 _GOOD_PCT, _MID_PCT = 75.0, 50.0
@@ -42,7 +42,7 @@ def gap_badge(gap: int) -> str:
         color, label = _COLOR_WARN, f"زيادة {-gap}"
     else:
         color, label = _COLOR_OK, "مكتمل"
-    return f'<span class="jb-badge" style="--c:{color}">{html.escape(label)}</span>'
+    return components.badge(label, color)
 
 
 def headcount_bar(current: int, required: int) -> str:

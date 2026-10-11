@@ -16,13 +16,13 @@ from services.application_service import ApplicationService
 from services.candidate_service import CandidateService
 from services.job_service import JobService
 from services.matching_service import MatchingService
+from ui import components
+from ui.helpers import clean_line
 
 _JOB_RESULTS_KEY = "matching_results"
 _CANDIDATE_RESULTS_KEY = "matching_candidate_results"
 _LIST_CACHE_TTL = 30
 
-_GOOD_THRESHOLD, _MID_THRESHOLD = 75, 50
-_COLOR_GOOD, _COLOR_MID, _COLOR_BAD = "#22c55e", "#f59e0b", "#ef4444"
 _KANBAN_COLUMN_MIN_PX = 235
 
 _STAGE_COLORS = {
@@ -50,18 +50,8 @@ _CSS = f"""
   border-top:3px solid var(--c);background:rgba(128,128,128,.10)}}
 .m-col-count{{font-size:.75rem;padding:1px 9px;border-radius:999px;background:var(--c);color:#fff}}
 .m-head{{display:flex;gap:10px;align-items:center}}
-.m-avatar{{width:44px;height:44px;flex:0 0 44px;border-radius:50%;overflow:hidden;display:grid;
-  place-items:center;font-weight:700;color:#fff;background:linear-gradient(135deg,#14b8a6,#3b82f6);
-  border:2px solid rgba(255,255,255,.25)}}
-.m-avatar img{{width:100%;height:100%;object-fit:cover}}
 .m-name{{font-weight:700;font-size:.92rem;line-height:1.2}}
 .m-pos{{font-size:.72rem;opacity:.65;line-height:1.3}}
-.m-score{{display:flex;align-items:center;gap:8px;margin:10px 0 4px}}
-.m-track{{flex:1;height:7px;border-radius:999px;background:rgba(128,128,128,.25);overflow:hidden}}
-.m-fill{{height:100%;border-radius:999px}}
-.m-score-val{{font-size:.8rem;font-weight:700;min-width:44px;text-align:end}}
-.m-mini{{margin-bottom:6px}}
-.m-mini-head{{display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:2px}}
 .st-key-m-kanban [data-testid="stHorizontalBlock"]{{overflow-x:auto;flex-wrap:nowrap;padding-bottom:8px}}
 .st-key-m-kanban [data-testid="stColumn"]{{min-width:{_KANBAN_COLUMN_MIN_PX}px}}
 [class*="st-key-kb-row-"] [data-testid="stHorizontalBlock"]{{
@@ -101,21 +91,6 @@ def _invalidate_list_caches() -> None:
 
 # ------------------------------------------------------------ مكوّنات HTML صغيرة
 
-def _score_color(value: float) -> str:
-    if value >= _GOOD_THRESHOLD:
-        return _COLOR_GOOD
-    return _COLOR_MID if value >= _MID_THRESHOLD else _COLOR_BAD
-
-
-def _clean_line(text: str) -> str:
-    return text.lstrip("✓✔⚠❌\ufe0f ").strip()
-
-
-def _initials(name: str) -> str:
-    parts = [p for p in (name or "").split() if p]
-    return "".join(p[0] for p in parts[:2]).upper() or "؟"
-
-
 @st.cache_data(show_spinner=False, max_entries=512)
 def _photo_data_uri(path: str, mtime: float) -> str | None:
     """الصورة كـ data URI لعرضها دائرية داخل HTML (mtime في المفتاح لتحديث الكاش عند تغيّر الصورة)."""
@@ -129,32 +104,13 @@ def _photo_data_uri(path: str, mtime: float) -> str | None:
 def _avatar_html(candidate) -> str:
     photo = CandidateService.photo_absolute_path(candidate)
     uri = _photo_data_uri(str(photo), photo.stat().st_mtime) if photo else None
-    inner = f'<img src="{uri}" alt="">' if uri else html.escape(_initials(candidate.full_name))
-    return f'<div class="m-avatar">{inner}</div>'
-
-
-def _score_bar_html(score: float) -> str:
-    pct = max(0.0, min(100.0, float(score)))
-    return (
-        f'<div class="m-score"><div class="m-track"><div class="m-fill" '
-        f'style="width:{pct}%;background:{_score_color(pct)}"></div></div>'
-        f'<span class="m-score-val" style="color:{_score_color(pct)}">{pct:g}%</span></div>'
-    )
+    return components.avatar(candidate.full_name, uri)
 
 
 def _head_html(avatar: str, title: str, subtitle: str, score: float) -> str:
     return (
         f'<div class="m-head">{avatar}<div><div class="m-name">{html.escape(title)}</div>'
-        f'<div class="m-pos">{html.escape(subtitle)}</div></div></div>{_score_bar_html(score)}'
-    )
-
-
-def _mini_bar(label: str, value: float) -> str:
-    pct = max(0.0, min(100.0, float(value)))
-    return (
-        f'<div class="m-mini"><div class="m-mini-head"><span>{html.escape(label)}</span>'
-        f'<span>{pct:g}%</span></div><div class="m-track"><div class="m-fill" '
-        f'style="width:{pct}%;background:{_score_color(pct)}"></div></div></div>'
+        f'<div class="m-pos">{html.escape(subtitle)}</div></div></div>{components.score_bar(score)}'
     )
 
 
@@ -179,7 +135,7 @@ def _scroll_container(key: str):
 def _render_match_details(r: dict) -> None:
     with st.expander("تفاصيل الدرجة"):
         bars = "".join(
-            _mini_bar(label, r["breakdown"][key])
+            components.labeled_bar(label, r["breakdown"][key])
             for key, label in _BREAKDOWN_LABELS.items() if key in r["breakdown"]
         )
         st.markdown(bars, unsafe_allow_html=True)
@@ -187,14 +143,14 @@ def _render_match_details(r: dict) -> None:
         st.markdown("**نقاط القوة**")
         if r["strengths"]:
             for s in r["strengths"]:
-                st.write(f"✔️ {_clean_line(s)}")
+                st.write(f"✔️ {clean_line(s)}")
         else:
             st.caption("لا توجد نقاط قوة مسجّلة.")
 
         st.markdown("**فجوات محتملة**")
         if r["gaps"]:
             for g in r["gaps"]:
-                st.write(f"❌ {_clean_line(g)}")
+                st.write(f"❌ {clean_line(g)}")
         else:
             st.caption("لا توجد فجوات.")
 
@@ -206,7 +162,6 @@ def _change_application_status(application_id: int, new_status: str) -> None:
         with get_db_session() as session:
             user = (st.session_state.get("user") or {}).get("full_name")
             ApplicationService(session).change_status(application_id, new_status, changed_by=user)
-            
 
         state = st.session_state.get(_JOB_RESULTS_KEY)
         if state:
@@ -324,7 +279,7 @@ def _render_job_to_candidates() -> None:
 def _render_job_result(r: dict) -> None:
     job = r["job"]
     subtitle = f"{job.department or 'بدون قسم'} · {job.location or 'بدون موقع'} · {job.status}"
-    avatar = f'<div class="m-avatar">{html.escape(_initials(job.title))}</div>'
+    avatar = components.avatar(job.title)
     with st.container(border=True):
         st.markdown(_head_html(avatar, job.title, subtitle, r["score"]), unsafe_allow_html=True)
         _render_match_details(r)

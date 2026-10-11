@@ -2,7 +2,6 @@
 الإضافة والتعديل داخل نوافذ (dialog) تحمل نموذج الوظيفة وتوليد الذكاء الاصطناعي وبنك الأسئلة.
 القسم والمسمى الوظيفي يُختاران من الهيكل التنظيمي (department_id / position_id)."""
 
-import re
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -22,6 +21,7 @@ from services.organization_service import OrganizationService
 from ui import job_components as ui
 from views import job_candidates
 from ui.guards import is_admin
+from ui.helpers import run_action, split_items
 
 # نفس فئات مهارات المرشح حتى تكون المطابقة متناسقة
 _LIST_FIELDS: list[tuple[str, str]] = [
@@ -63,6 +63,7 @@ def _invalidate_job_related_caches() -> None:
     قوائم الوظائف مخزّنة مؤقتاً في أكثر من صفحة (المطابقة، المقابلات، الهيكل التنظيمي)، ونتيجة
     "الوظائف المناسبة" مخزّنة في بطاقة المرشح. يجب مسحها كلها عند أي تغيير في الوظائف
     حتى لا تظهر بيانات قديمة بعد الحفظ مباشرة.
+    (مسجّلة في ui.helpers._CACHE_CLEARERS فلا تستدعِ invalidate_all من هنا.)
     """
     _page_data.clear()
     _cached_insight.clear()
@@ -88,11 +89,6 @@ def _invalidate_job_related_caches() -> None:
         _organization._overview.clear()
     except Exception:
         pass
-
-
-def _split_items(raw: str) -> list[str]:
-    """تقسيم نص مفصول بفاصلة (إنجليزية أو عربية) أو أسطر إلى قائمة نظيفة."""
-    return [part.strip() for part in re.split(r"[,،\n]", raw or "") if part.strip()]
 
 
 def _experience_text(years: float | None) -> str:
@@ -335,7 +331,7 @@ def _job_form_fields(key: str) -> dict:
         "required_experience_years": experience or None,
         "status": status,
         "description": description.strip() or None,
-        **{attr: _split_items(raw) for attr, raw in raw_lists.items()},
+        **{attr: split_items(raw) for attr, raw in raw_lists.items()},
     }
 
 @st.dialog("➕ إضافة وظيفة جديدة", width="large")
@@ -444,15 +440,8 @@ def _go_to_matching(job_id: int, title: str) -> None:
 
 
 def _quick_action(action, success: str) -> None:
-    try:
-        with get_db_session() as session:
-            action(JobService(session))
-    except SmartATSError as exc:
-        st.error(str(exc))
-        return
-    _invalidate_job_related_caches()
-    st.toast(success)
-    st.rerun()
+    """action تستقبل JobService (نسخ، إغلاق...)؛ التنفيذ والكاش وإعادة التشغيل عبر run_action."""
+    run_action(lambda session: action(JobService(session)), success)
 
 
 # ------------------------------------------------------------ المؤشرات والفلاتر

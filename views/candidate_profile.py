@@ -2,7 +2,6 @@
 render_drawer تُستخدم كلوحة جانبية في صفحة المرشحين، و render_profile للاستخدام داخل expander (رفع السير، المقابلات)."""
 
 import html
-import re
 
 import streamlit as st
 
@@ -13,6 +12,8 @@ from models.candidate import Candidate
 from services.candidate_service import CandidateService
 from services.job_service import JobService
 from services import background_analysis
+from ui import components
+from ui.helpers import split_items
 from ui.navigation import OFFER_PREFILL_CANDIDATE, OPEN_CREATE_OFFER, go_to
 
 _SKILL_SECTIONS: list[tuple[str, str]] = [
@@ -40,13 +41,10 @@ _STATUS_COLORS = {
     "New": "#64748b", "Screening": "#3b82f6", "Shortlisted": "#22c55e", "Interview": "#f59e0b",
     "Offer": "#a855f7", "Hired": "#14b8a6", "Rejected": "#ef4444",
 }
+_DEFAULT_STATUS_COLOR = "#64748b"
 
 _CSS = """
 <style>
-.cp-badge{display:inline-block;padding:2px 12px;border-radius:999px;font-size:.78rem;font-weight:700;
-  color:var(--c);border:1px solid var(--c);background:color-mix(in srgb,var(--c) 14%,transparent)}
-.cp-chip{display:inline-block;padding:2px 10px;margin:0 4px 6px 0;border-radius:999px;font-size:.76rem;
-  border:1px solid rgba(59,130,246,.35);background:rgba(59,130,246,.10)}
 .cp-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:8px;margin:8px 0 4px}
 .cp-kpi{padding:9px 12px;border:1px solid rgba(128,128,128,.25);border-radius:10px;background:rgba(128,128,128,.06)}
 .cp-kpi-l{font-size:.7rem;opacity:.65}
@@ -62,12 +60,8 @@ def _inject_css() -> None:
 
 # ------------------------------------------------------------ أدوات صغيرة
 
-def _chips(items: list[str]) -> str:
-    return "".join(f'<span class="cp-chip">{html.escape(item)}</span>' for item in items)
-
-
-def _badge(text: str, color: str) -> str:
-    return f'<span class="cp-badge" style="--c:{color}">{html.escape(text)}</span>'
+def _status_badge(status: str) -> str:
+    return components.badge(status, _STATUS_COLORS.get(status, _DEFAULT_STATUS_COLOR))
 
 
 def _kpi_html(items: list[tuple[str, str]]) -> str:
@@ -77,11 +71,6 @@ def _kpi_html(items: list[tuple[str, str]]) -> str:
         for label, value in items
     )
     return f'<div class="cp-kpis">{cells}</div>'
-
-
-def _split_items(raw: str) -> list[str]:
-    """تقسيم نص مفصول بفاصلة (إنجليزية أو عربية) أو أسطر إلى قائمة نظيفة."""
-    return [part.strip() for part in re.split(r"[,،\n]", raw or "") if part.strip()]
 
 
 def _positions_from_experience(candidate: Candidate) -> list[str]:
@@ -149,7 +138,7 @@ def _render_header(candidate: Candidate, photo_path, lang: str) -> None:
     with col_info:
         status = candidate.status or "New"
         st.markdown(f"### {candidate.full_name}")
-        st.markdown(_badge(status, _STATUS_COLORS.get(status, "#64748b")), unsafe_allow_html=True)
+        st.markdown(_status_badge(status), unsafe_allow_html=True)
         position = _value(candidate, "current_position", lang)
         st.caption(" · ".join(p for p in (position, f"🆔 {candidate.candidate_code}" if candidate.candidate_code else None) if p))
 
@@ -183,8 +172,7 @@ def _render_actions(candidate: Candidate, summary: dict | None = None) -> None:
 
     with st.container(border=True):
         col_stage, col_match = st.columns([3, 1])
-        col_stage.markdown(f"**المرحلة الحالية:** {_badge(status, _STATUS_COLORS.get(status, '#64748b'))}",
-                           unsafe_allow_html=True)
+        col_stage.markdown(f"**المرحلة الحالية:** {_status_badge(status)}", unsafe_allow_html=True)
         if best is not None:
             col_match.metric("أفضل مطابقة", f"{best:g}%")
 
@@ -288,7 +276,7 @@ def _render_overview(candidate: Candidate, lang: str) -> None:
         if items:
             shown = True
             st.caption(title)
-            st.markdown(_chips(items), unsafe_allow_html=True)
+            st.markdown(components.chips(items), unsafe_allow_html=True)
     if not shown:
         st.caption(_NOT_MENTIONED)
 
@@ -329,12 +317,12 @@ def _render_details(candidate: Candidate, lang: str) -> None:
     )
     languages = _value(candidate, _LANGUAGES_SECTION[1], lang) or []
     st.caption(_LANGUAGES_SECTION[0])
-    st.markdown(_chips(languages) if languages else _NOT_MENTIONED, unsafe_allow_html=True)
+    st.markdown(components.chips(languages) if languages else _NOT_MENTIONED, unsafe_allow_html=True)
 
     for title, attr in _BACKGROUND_SECTIONS:
         items = _value(candidate, attr, lang) or []
         st.caption(title)
-        st.markdown(_chips(items) if items else _NOT_MENTIONED, unsafe_allow_html=True)
+        st.markdown(components.chips(items) if items else _NOT_MENTIONED, unsafe_allow_html=True)
 
     st.markdown('<div class="cp-title">🎯 بيانات التوظيف</div>', unsafe_allow_html=True)
     st.write(f"الوظيفة المستهدفة: {candidate.applied_job or '-'}")
@@ -430,7 +418,7 @@ def _analysis_panel(candidate_id: int, polling: bool) -> None:
             st.write(f"⚠ {g}")
     if analysis.get("suitable_functions"):
         st.markdown("**الأقسام/الوظائف المناسبة:**")
-        st.markdown(_chips(analysis["suitable_functions"]), unsafe_allow_html=True)
+        st.markdown(components.chips(analysis["suitable_functions"]), unsafe_allow_html=True)
     meta = analysis.get("meta") or {}
     if meta:
         st.caption(f" {meta.get('created_at', '')[:16]}")
@@ -519,7 +507,7 @@ def _render_edit_form(candidate: Candidate, photo_path) -> None:
                 expected_salary=salary or None,
                 notice_period_days=notice or None,
                 recruiter_notes=notes.strip() or None,
-                **{attr: _split_items(raw) for attr, raw in raw_lists.items()},
+                **{attr: split_items(raw) for attr, raw in raw_lists.items()},
             )
             if remove_photo:
                 service.remove_photo(cid)

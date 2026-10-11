@@ -17,7 +17,7 @@ from models.job import Job
 from services.application_service import ApplicationService
 from services.job_service import JobService
 from ui import components
-from views import job_candidates
+from ui.helpers import invalidate_all
 from ui.navigation import OFFER_PREFILL_APP, go_to, OPEN_CREATE_OFFER
 
 
@@ -87,9 +87,10 @@ def _load(job_id: int | None) -> list[dict]:
         ]
 
 
-def _clear() -> None:
+def clear_cache() -> None:
+    """يمسح كاش هذه الصفحة فقط. يُستدعى من ui.helpers.invalidate_all (لا تستدعِ invalidate_all من هنا)."""
     _load.clear()
-    job_candidates._clear_caches()
+    _jobs.clear()
 
 
 def _move(app_id: int, new_status: str) -> None:
@@ -98,7 +99,7 @@ def _move(app_id: int, new_status: str) -> None:
         user = (st.session_state.get("user") or {}).get("full_name")
         with get_db_session() as session:
             ApplicationService(session).change_status(app_id, new_status, changed_by=user)
-        _clear()
+        invalidate_all()
         st.toast(f"تم النقل إلى «{_STAGE_LABELS.get(new_status, new_status)}» ✅")
     except SmartATSError as exc:
         st.toast(str(exc))

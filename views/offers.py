@@ -16,6 +16,7 @@ from services.offer_service import EXPIRED, EXPIRING_SOON, EXPIRING_SOON_DAYS, O
 from services.report_service import ReportService
 from ui import charts
 from ui import components
+from ui.helpers import run_action
 from ui.navigation import OFFER_PREFILL_APP, OFFER_PREFILL_CANDIDATE, go_to
 
 
@@ -46,6 +47,7 @@ _DEFAULT_EXPIRY_DAYS = 14
 _DATE_FORMAT, _DATETIME_FORMAT = "%Y-%m-%d", "%Y-%m-%d %H:%M"
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _NAV_KEY, _REPORTS_PAGE = "nav_page", "📈 التقارير"
+_AVATAR_PX = 36
 
 _OFFER_APP_KEY = "new_offer_app"
 
@@ -70,12 +72,8 @@ _CSS = """<style>
 .of-th{font-size:.75rem;font-weight:700;opacity:.7;padding:6px 0;border-bottom:1px solid rgba(128,128,128,.3)}
 .of-cell{font-size:.82rem}
 .of-cand{display:flex;gap:10px;align-items:center}
-.of-avatar{width:36px;height:36px;flex:0 0 36px;border-radius:50%;display:grid;place-items:center;
-  font-weight:700;font-size:.78rem;background:rgba(37,99,235,.16);color:#2563eb}
 .of-name{font-weight:600;font-size:.85rem;line-height:1.2}
 .of-sub{font-size:.7rem;opacity:.6;word-break:break-all}
-.of-badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.74rem;font-weight:700;
-  color:var(--c);border:1px solid var(--c);background:color-mix(in srgb,var(--c) 14%,transparent);white-space:nowrap}
 .of-hr{border:none;border-top:1px solid rgba(128,128,128,.18);margin:2px 0 4px}
 .of-page{text-align:center;font-size:.85rem;padding-top:6px}
 .of-legend-row{display:flex;justify-content:space-between;font-size:.82rem;padding:4px 0}
@@ -122,45 +120,17 @@ def _salary_text(salary: float | None) -> str:
     return f"{salary:,.0f} {DEFAULT_SALARY_CURRENCY}" if salary else "-"
 
 
-def _initials(name: str) -> str:
-    parts = [p for p in (name or "").split() if p]
-    return "".join(p[0] for p in parts[:2]).upper() or "؟"
-
-
 def _badge(status: str) -> str:
-    color = _STATUS_COLORS.get(status, "#64748b")
-    return f'<span class="of-badge" style="--c:{color}">{_esc(_STATUS_LABELS.get(status, status))}</span>'
+    """شارة حالة العرض (التسمية واللون من قواميس هذه الصفحة)."""
+    return components.badge(_STATUS_LABELS.get(status, status), _STATUS_COLORS.get(status))
 
 
 def _candidate_cell(o: dict) -> str:
     return (
-        f'<div class="of-cand"><div class="of-avatar">{_esc(_initials(o["candidate"]))}</div>'
+        f'<div class="of-cand">{components.avatar(o["candidate"], size=_AVATAR_PX)}'
         f'<div><div class="of-name">{_esc(o["candidate"])}</div>'
         f'<div class="of-sub">{_esc(o["email"])}</div></div></div>'
     )
-
-
-def _invalidate() -> None:
-    """التعيين يغيّر الهيكل والتقارير والمرشحين: نمسح كاشها حتى لا تظهر أرقام قديمة."""
-    for module_name, cache_fn in (("jobs", "_invalidate_job_related_caches"), ("candidates", "invalidate_cache"),
-                                  ("dashboard", "clear_cache")):
-        try:
-            module = __import__(f"views.{module_name}", fromlist=[cache_fn])
-            getattr(module, cache_fn)()
-        except Exception:  # noqa: BLE001 - فشل مسح كاش صفحة لا يوقف العملية
-            pass
-
-
-def _run(action, success: str) -> None:
-    try:
-        with get_db_session() as session:
-            action(session)
-    except SmartATSError as exc:
-        st.error(str(exc))
-        return
-    _invalidate()
-    st.toast(success)
-    st.rerun()
 
 
 def _set_page(page: int) -> None:
@@ -214,7 +184,7 @@ def _create_dialog() -> None:
 
     if submitted:
         st.session_state.pop(_OFFER_APP_KEY, None)
-        _run(
+        run_action(
             lambda s: OfferService(s).create_offer(application_id, salary or None, start, notes, _user_name(), expires),
             "تم إنشاء العرض ونُقل المرشح إلى مرحلة «العرض» ✅",
         )
@@ -231,7 +201,7 @@ def _edit_dialog(o: dict) -> None:
         notes = st.text_area("ملاحظات", value=o["notes"] or "")
         saved = st.form_submit_button("💾 حفظ", type="primary")
     if saved:
-        _run(lambda s: OfferService(s).update_offer(oid, salary or None, start, notes, expires), "تم الحفظ ✅")
+        run_action(lambda s: OfferService(s).update_offer(oid, salary or None, start, notes, expires), "تم الحفظ ✅")
 
 
 # ------------------------------------------------------------ المؤشرات ومسار التوظيف
@@ -359,14 +329,14 @@ def _render_actions(o: dict) -> None:
         }.get(o["status"], [])
         for text, target in actions:
             if st.button(text, key=f"of_{target}_{oid}", width="stretch"):
-                _run(lambda s, t=target: OfferService(s).set_status(oid, t), "تم تحديث حالة العرض ✅")
+                run_action(lambda s, t=target: OfferService(s).set_status(oid, t), "تم تحديث حالة العرض ✅")
 
         if o["notes"]:
             st.caption(f"📝 {o['notes']}")
         if o["status"] in (_DRAFT, _WITHDRAWN, _DECLINED) and st.button(
             "🗑️ حذف", key=f"of_del_{oid}", width="stretch"
         ):
-            _run(lambda s: OfferService(s).delete_offer(oid), "تم الحذف 🗑️")
+            run_action(lambda s: OfferService(s).delete_offer(oid), "تم الحذف 🗑️")
 
 
 # ------------------------------------------------------------ الجدول والبطاقات
@@ -571,7 +541,7 @@ def _render_hiring_tab(offers: list[dict]) -> None:
             st.caption(f"الراتب: {o['salary']:,.0f} · بدء: {o['start_date'] or '-'}" if o["salary"] else f"بدء: {o['start_date'] or '-'}")
             confirm = st.checkbox("أؤكد تعيين هذا المرشح", key=f"hire_ok_{o['id']}")
             if st.button("🎉 تأكيد التعيين", key=f"hire_{o['id']}", type="primary", disabled=not confirm):
-                _run(lambda s: OfferService(s).hire(o["id"], _user_name()), "تم التعيين وتحديث الهيكل التنظيمي ✅")
+                run_action(lambda s: OfferService(s).hire(o["id"], _user_name()), "تم التعيين وتحديث الهيكل التنظيمي ✅")
 
     hired = [o for o in offers if o["app_status"] == _HIRED]
     if hired:

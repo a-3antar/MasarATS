@@ -1,9 +1,12 @@
-"""مولّدات HTML صغيرة لصفحة الوظائف (بطاقات المؤشرات، الشارات، القمع...). لا تصل للقاعدة."""
+"""مولّدات HTML صغيرة لصفحة الوظائف (بطاقات المؤشرات، القمع...). لا تصل للقاعدة.
+الشارات والشرائح موحّدة في ui/components.py."""
 
 import html
 from datetime import datetime, timezone
 
 import streamlit as st
+
+from ui import components
 
 _STATUS_COLORS = {"Open": "#16a34a", "Draft": "#64748b", "On Hold": "#d97706", "Closed": "#dc2626"}
 _SECONDS_PER_MINUTE, _MINUTES_PER_HOUR, _HOURS_PER_DAY = 60, 60, 24
@@ -20,10 +23,6 @@ _CSS = """<style>
 .jb-kpi-value{font-size:1.7rem;font-weight:700;line-height:1.2}
 .jb-kpi-sub{font-size:.72rem;font-weight:600}
 .jb-up{color:#16a34a}.jb-down{color:#dc2626}.jb-muted{opacity:.65}
-.jb-badge{display:inline-block;padding:2px 12px;border-radius:999px;font-size:.78rem;font-weight:700;
-  color:var(--c);border:1px solid var(--c);background:color-mix(in srgb,var(--c) 14%,transparent)}
-.jb-chip{display:inline-block;padding:3px 10px;margin:0 0 6px 6px;border-radius:999px;font-size:.75rem;
-  border:1px solid rgba(37,99,235,.35);background:rgba(37,99,235,.1)}
 .jb-title{font-size:1.1rem;font-weight:700;margin-bottom:6px}
 .jb-section{font-size:.95rem;font-weight:700;margin:14px 0 6px}
 .jb-row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;font-size:.85rem;
@@ -92,14 +91,11 @@ def kpi_card(icon: str, label: str, value: int, sub: str = "", tone: str = "mute
 
 
 def status_badge(status: str, label: str) -> str:
-    color = _STATUS_COLORS.get(status, "#64748b")
-    return f'<span class="jb-badge" style="--c:{color}">{html.escape(label)}</span>'
+    return components.badge(label, _STATUS_COLORS.get(status))
 
 
 def skill_chips(skills: list[str]) -> str:
-    if not skills:
-        return '<span class="jb-muted">غير محدد</span>'
-    return "".join(f'<span class="jb-chip">{html.escape(s)}</span>' for s in skills)
+    return components.chips(skills, empty='<span class="jb-muted">غير محدد</span>')
 
 
 def info_rows(rows: list[tuple[str, str]]) -> str:

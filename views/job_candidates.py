@@ -19,27 +19,19 @@ from services.candidate_service import CandidateService
 from services.job_service import JobService
 from services.matching_service import MatchingService
 from ui import components
+from ui.helpers import clean_line, invalidate_all
 from ui.navigation import go_to
+from ui.theme import score_color
 
 _TTL = 30
 _SHOW_OPTIONS = [5, 10, 25]
 _DEFAULT_SHOW = 10
-_COLOR_GOOD, _COLOR_MID, _COLOR_BAD = "#22c55e", "#f59e0b", "#ef4444"
-_GOOD, _MID = 75, 50
 _SHORTLIST_FROM = ("New", "Screening")
 _NO_RECOMMEND_STAGES = ("Rejected", "Hired", "Offer", "Interview")
 _BREAKDOWN_LABELS = {
     "skills": "المهارات", "experience": "الخبرة", "location": "الموقع",
     "education": "التعليم", "semantic": "التشابه العام",
 }
-
-
-def _color(value: float) -> str:
-    return _COLOR_GOOD if value >= _GOOD else _COLOR_MID if value >= _MID else _COLOR_BAD
-
-
-def _clean(text: str) -> str:
-    return text.lstrip("✓✔⚠❌\ufe0f ").strip()
 
 
 @st.cache_data(ttl=_TTL, show_spinner=False)
@@ -69,16 +61,9 @@ def _load(job_id: int) -> list[dict]:
         ]
 
 
-def _clear_caches() -> None:
-    """بعد أي تغيير: نمسح كل ما يعرض هذه البيانات حتى لا تظهر أرقام قديمة."""
+def clear_cache() -> None:
+    """يمسح كاش هذه الصفحة فقط. يُستدعى من ui.helpers.invalidate_all (لا تستدعِ invalidate_all من هنا)."""
     _load.clear()
-    for module_name, fn_name in (("jobs", "_invalidate_job_related_caches"), ("candidates", "invalidate_cache"),
-                                 ("dashboard", "clear_cache")):
-        try:
-            module = __import__(f"views.{module_name}", fromlist=[fn_name])
-            getattr(module, fn_name)()
-        except Exception:  # noqa: BLE001 - فشل مسح كاش صفحة لا يوقف العملية
-            pass
 
 
 def _shortlist(app_id: int) -> None:
@@ -87,7 +72,7 @@ def _shortlist(app_id: int) -> None:
         user = (st.session_state.get("user") or {}).get("full_name")
         with get_db_session() as session:
             ApplicationService(session).change_status(app_id, "Shortlisted", changed_by=user)
-        _clear_caches()
+        invalidate_all()
         st.toast("تمت الإضافة للقائمة المختصرة ✅")
     except SmartATSError as exc:
         st.toast(str(exc))
@@ -102,7 +87,7 @@ def _run_matching(job_id: int) -> None:
                 candidates = CandidateService(session).list_all(limit=SEARCH_MAX_CANDIDATES)
                 if job is not None and candidates:
                     MatchingService(session).match_all_candidates_to_job(job, candidates)
-        _clear_caches()
+        invalidate_all()
         st.rerun()
     except SmartATSError as exc:
         st.error(str(exc))
@@ -133,11 +118,11 @@ def _render_explanation(r: dict) -> None:
     if strengths:
         st.markdown("**لماذا يناسب الوظيفة**")
         for line in strengths:
-            st.write(f"✓ {_clean(line)}")
+            st.write(f"✓ {clean_line(line)}")
     if gaps:
         st.markdown("**مهارات تحتاج تحققاً**")
         for line in gaps:
-            st.write(f"⚠ {_clean(line)}")
+            st.write(f"⚠ {clean_line(line)}")
     st.caption("تقدير آلي مبني على السيرة الذاتية — القرار النهائي لك.")
 
 
@@ -152,7 +137,7 @@ def _render_card(r: dict, job_id: int, job_title: str) -> None:
         col_info.markdown(f"**{html.escape(r['name'])}** — {r['status']}")
         col_info.caption(meta or "-")
         col_score.markdown(
-            f'<div style="text-align:center;font-size:1.3rem;font-weight:800;color:{_color(score)}">{score:g}%</div>',
+            f'<div style="text-align:center;font-size:1.3rem;font-weight:800;color:{score_color(score)}">{score:g}%</div>',
             unsafe_allow_html=True,
         )
         with st.expander("لماذا هذه النسبة؟"):
@@ -179,9 +164,6 @@ def render_best_candidates(job_id: int, job_title: str) -> None:
     """القسم الرئيسي في صفحة الوظيفة: الإجراء الأساسي = عرض/تحديث أفضل المرشحين."""
     st.markdown(f"### 🎯 أفضل المرشحين — {job_title}")
     rows = _load(job_id)
-
-    if not CandidateService.__name__:  # pragma: no cover - يحافظ على الاستيراد للتحقق من التحميل
-        return
 
     if not rows:
         with get_db_session() as session:

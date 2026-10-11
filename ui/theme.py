@@ -133,9 +133,55 @@ h2 {{ padding-bottom: .35rem; border-bottom: 2px solid var(--ats-primary); displ
 
 /* التنبيهات */
 [data-testid="stAlert"] {{ border-radius: var(--ats-radius); }}
+
+/* ===== مكوّنات مشتركة (المرحلة B): تقابل ui/components.py ===== */
+
+/* شارة حالة */
+.ui-badge {{
+  display: inline-block; padding: 2px 12px; border-radius: 999px;
+  font-size: .78rem; font-weight: 700; white-space: nowrap;
+  color: var(--c); border: 1px solid var(--c);
+  background: color-mix(in srgb, var(--c) 14%, transparent);
+}}
+
+/* شريحة (مهارة / فلتر) */
+.ui-chip {{
+  display: inline-block; padding: 3px 10px; margin: 0 0 6px 6px; border-radius: 999px;
+  font-size: .75rem; border: 1px solid rgba(37,99,235,.35); background: rgba(37,99,235,.1);
+}}
+
+/* شريط الدرجة */
+.ui-track {{ height: 7px; border-radius: 999px; background: rgba(128,128,128,.22); overflow: hidden; }}
+.ui-fill {{ height: 100%; border-radius: 999px; }}
+.ui-score {{ display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; }}
+.ui-score .ui-track {{ flex: 1; }}
+.ui-score-val {{ font-size: .8rem; font-weight: 700; min-width: 44px; text-align: end; }}
+
+/* شريط بعنوان (تفصيل معيار) */
+.ui-bar-row {{ margin-bottom: 8px; }}
+.ui-bar-head {{ display: flex; justify-content: space-between; font-size: .76rem; margin-bottom: 3px; }}
+
+/* حلقة الدرجة */
+.ui-ring-wrap {{ display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 84px; }}
+.ui-ring-box {{ position: relative; display: grid; place-items: center; }}
+.ui-ring {{
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(var(--c) calc(var(--p) * 1%), rgba(128,128,128,.22) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
+}}
+.ui-ring-val {{ position: relative; font-weight: 700; }}
+.ui-ring-label {{ font-size: .75rem; opacity: .8; text-align: center; }}
+
+/* الصورة الرمزية (المقاس عبر --s) */
+.ui-avatar {{
+  width: var(--s); height: var(--s); flex: 0 0 var(--s); border-radius: 50%; overflow: hidden;
+  display: grid; place-items: center; font-weight: 700; font-size: calc(var(--s) * .36); color: #fff;
+  background: linear-gradient(135deg, #14b8a6, #3b82f6); border: 2px solid rgba(255,255,255,.25);
+}}
+.ui-avatar img {{ width: 100%; height: 100%; object-fit: cover; }}
 </style>
 """
-
 
 def inject_theme() -> None:
     """يحقن CSS العام. يُستدعى مرة واحدة في كل دورة من app.py."""

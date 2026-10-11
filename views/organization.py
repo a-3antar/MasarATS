@@ -15,6 +15,7 @@ from services.matching_service import MatchingService
 from services.organization_service import OrganizationService
 from ui import job_components as jobs_ui
 from ui import org_components as ui
+from ui.helpers import clean_line, run_action
 
 _CACHE_TTL = 30
 _CARD_COLUMNS = 3
@@ -40,27 +41,14 @@ def _overview() -> dict:
 
 
 def _invalidate() -> None:
-    """مسح كاش الهيكل وكاش الوظائف (الهيكل مرتبط بالوظائف فيتأثر الاثنان)."""
+    """مسح كاش الهيكل وكاش الوظائف (الهيكل مرتبط بالوظائف فيتأثر الاثنان).
+    مسجّلة في ui.helpers._CACHE_CLEARERS فلا تستدعِ invalidate_all من هنا."""
     _overview.clear()
     try:
         from views import jobs as _jobs
         _jobs._invalidate_job_related_caches()
     except Exception:  # noqa: BLE001
         pass
-
-
-def _run(action, success: str) -> bool:
-    """ينفّذ عملية على الخدمات داخل جلسة، ويعرض الخطأ للمستخدم. يعيد تشغيل الصفحة عند النجاح."""
-    try:
-        with get_db_session() as session:
-            action(session)
-    except SmartATSError as exc:
-        st.error(str(exc))
-        return False
-    _invalidate()
-    st.toast(success)
-    st.rerun()
-    return True
 
 
 def _go_to_jobs(job_id: int) -> None:
@@ -71,10 +59,6 @@ def _go_to_jobs(job_id: int) -> None:
 def _go_to_matching(job_id: int, title: str) -> None:
     st.session_state[_NAV_KEY] = _MATCHING_PAGE
     st.session_state[_MATCHING_JOB_KEY] = f"{title} (#{job_id})"
-
-
-def _clean_line(text: str) -> str:
-    return text.lstrip("✓✔⚠❌\ufe0f ").strip()
 
 
 def _index_of(options: dict, value) -> int:
@@ -101,7 +85,7 @@ def _create_department_dialog() -> None:
         parent = st.selectbox("القسم الأب", list(parents), key="new_dept_parent")
         submitted = st.form_submit_button("حفظ", type="primary")
     if submitted:
-        _run(lambda s: OrganizationService(s).create_department(name, parents[parent]), "تمت إضافة القسم ✅")
+        run_action(lambda s: OrganizationService(s).create_department(name, parents[parent]), "تمت إضافة القسم ✅")
 
 
 @st.dialog("✏️ تعديل القسم")
@@ -129,12 +113,12 @@ def _edit_department_dialog(dept_id: int) -> None:
             service = OrganizationService(s)
             service.update_department(dept_id, name=name, parent_department_id=parents[parent])
             service.set_department_manager(dept_id, dept_positions[manager_label])
-        _run(save, "تم الحفظ ✅")
+        run_action(save, "تم الحفظ ✅")
 
     st.divider()
     confirm = st.checkbox("تأكيد حذف هذا القسم", key=f"confirm_del_dept_{dept_id}")
     if st.button("🗑️ حذف القسم", disabled=not confirm, key=f"del_dept_{dept_id}"):
-        _run(lambda s: OrganizationService(s).delete_department(dept_id), "تم حذف القسم 🗑️")
+        run_action(lambda s: OrganizationService(s).delete_department(dept_id), "تم حذف القسم 🗑️")
 
 
 # ------------------------------------------------------------ نوافذ المسميات الوظيفية
@@ -174,7 +158,7 @@ def _create_position_dialog() -> None:
         submitted = st.form_submit_button("حفظ", type="primary")
     if submitted:
         title = values.pop("title")
-        _run(lambda s: OrganizationService(s).create_position(title, **values), "تمت إضافة المسمى الوظيفي ✅")
+        run_action(lambda s: OrganizationService(s).create_position(title, **values), "تمت إضافة المسمى الوظيفي ✅")
 
 
 @st.dialog("✏️ تعديل المسمى الوظيفي", width="large")
@@ -188,11 +172,11 @@ def _edit_position_dialog(position_id: int) -> None:
         values = _position_form_fields(f"edit_pos_{position_id}", overview, pos)
         saved = st.form_submit_button("💾 حفظ", type="primary")
     if saved:
-        _run(lambda s: OrganizationService(s).update_position(position_id, **values), "تم الحفظ ✅")
+        run_action(lambda s: OrganizationService(s).update_position(position_id, **values), "تم الحفظ ✅")
     st.divider()
     confirm = st.checkbox("تأكيد حذف هذا المسمى", key=f"confirm_del_pos_{position_id}")
     if st.button("🗑️ حذف المسمى", disabled=not confirm, key=f"del_pos_{position_id}"):
-        _run(lambda s: OrganizationService(s).delete_position(position_id), "تم الحذف 🗑️")
+        run_action(lambda s: OrganizationService(s).delete_position(position_id), "تم الحذف 🗑️")
 
 
 # ------------------------------------------------------------ ربط الهيكل بالوظائف والبحث عن مرشحين
@@ -222,8 +206,8 @@ def _run_search(job_id: int) -> None:
                         "name": r["candidate"].full_name,
                         "position": r["candidate"].current_position or "-",
                         "score": r["score"],
-                        "strengths": [_clean_line(s) for s in r["strengths"]],
-                        "gaps": [_clean_line(g) for g in r["gaps"]],
+                        "strengths": [clean_line(s) for s in r["strengths"]],
+                        "gaps": [clean_line(g) for g in r["gaps"]],
                     }
                     for r in ranked[:_TOP_CANDIDATES]
                 ]
