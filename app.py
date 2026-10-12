@@ -1,14 +1,3 @@
-"""
-SmartATS AI - نقطة الدخول الرئيسية.
-
-تحتوي هذه الطبقة على:
-- تهيئة قاعدة البيانات
-- تسجيل الدخول / إنشاء حساب جديد / نسيت كلمة المرور (مع خيار "تذكرني")
-- الشريط الجانبي (التنقل + قائمة «＋ جديد» العامة) وتوجيه الصفحات
-
-لا تحتوي هذه الطبقة (app.py) على أي منطق أعمال أو استعلامات قاعدة بيانات
-مباشرة — كل ذلك يمر عبر services/ كما تنص المعمارية.
-"""
 
 import importlib
 import time
@@ -31,7 +20,6 @@ st.set_page_config(page_title="SmartATS AI", page_icon="🧩", layout="wide")
 
 @st.cache_resource
 def _bootstrap() -> None:
-    """تُنفَّذ مرة واحدة فقط عند أول تشغيل للتطبيق (بفضل cache_resource)."""
     setup_logging()
     init_db()
 
@@ -39,7 +27,6 @@ def _bootstrap() -> None:
 _bootstrap()
 
 
-# ---------------------------------------------------------- كوكيز "تذكرني"
 try:
     from streamlit_cookies_controller import CookieController
 
@@ -53,7 +40,6 @@ _COOKIE_AUTH = "smartats_auth"
 _PENDING_REMEMBER_KEY = "_pending_remember"
 _RESET_EMAIL_KEY = "_reset_email"
 
-# إجراءات قائمة «＋ جديد»: (النص، مفتاح الصفحة، قيم session_state). لا نعرض إلا ما هو مدعوم فعلاً.
 _NEW_ACTIONS = [
     ("📄 رفع سيرة ذاتية", "upload_cv", {}),
     ("👤 إضافة مرشح", "candidates", {}),
@@ -64,7 +50,6 @@ _NEW_ACTIONS = [
 
 
 def _session_user(user) -> dict:
-    """بيانات المستخدم المحفوظة في session_state (بما فيها الصفحات المخصصة إن وُجدت)."""
     return {
         "id": user.id,
         "username": user.username,
@@ -75,11 +60,9 @@ def _session_user(user) -> dict:
 
 
 def _set_remember_cookie(user_id: int, token: str) -> bool:
-    """يكتب كوكيز "تذكرني". يرجع False إن لم يكن الـ controller جاهزاً بعد (يُعاد المحاولة في الدورة التالية)."""
     if not _COOKIES_AVAILABLE:
         return True
 
-    # getAll() تُهيّئ القاموس الداخلي للـ controller؛ قبلها يكون None ويفشل set() بـ TypeError
     if _cookies.getAll() is None:
         return False
 
@@ -112,12 +95,9 @@ def _apply_pending_remember_cookie() -> None:
         st.session_state.pop(_PENDING_REMEMBER_KEY, None)
         time.sleep(0.5)
         st.rerun()
-    # غير ذلك: نُبقي القيمة المعلّقة، وسيُعاد المحاولة تلقائياً عند الـ rerun
-    # التالي الذي يُطلقه المكوّن بعد وصول الكوكيز من المتصفح.
 
 
 def _try_auto_login() -> None:
-    """يحاول تسجيل الدخول تلقائياً من كوكيز "تذكرني" إن وُجدت وكانت صالحة."""
     if not _COOKIES_AVAILABLE or st.session_state.get("user") is not None:
         return
 
@@ -154,7 +134,6 @@ def _init_session_state() -> None:
 
 
 def _forgot_password_view() -> None:
-    """خطوتان: (1) إرسال كود للبريد  (2) إدخال الكود وكلمة المرور الجديدة."""
     email = st.session_state.get(_RESET_EMAIL_KEY)
 
     if not email:
@@ -264,7 +243,6 @@ def _login_view() -> None:
 
 
 def _render_new_menu() -> None:
-    """قائمة «＋ جديد» العامة: وصول مباشر لأهم الإجراءات من أي صفحة."""
     with st.popover("＋ جديد"):
         for index, (label, page_key, state) in enumerate(_NEW_ACTIONS):
             st.button(label, key=f"new_action_{index}", on_click=go_to, args=(page_key,), kwargs=state)
@@ -288,7 +266,7 @@ def _authenticated_view() -> None:
 
     current = st.session_state.get(NAV_KEY)
     if current not in pages:
-        if current in PAGES:  # انتقال برمجي (go_to) لصفحة غير مسموحة
+        if current in PAGES:
             st.toast("ليست لديك صلاحية الوصول لهذه الصفحة.")
         st.session_state[NAV_KEY] = next(iter(pages))
 
@@ -306,7 +284,6 @@ def _authenticated_view() -> None:
             st.session_state.user = None
             st.rerun()
 
-    # اسم الصفحة = اسم الوحدة داخل views/ وكلها تعرّف render()
     importlib.import_module(f"views.{pages[selected_page]}").render()
 
 

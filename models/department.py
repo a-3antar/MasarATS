@@ -1,4 +1,3 @@
-"""نموذج القسم (جدول departments). يمثل الهيكل التنظيمي للشركة - يمكن أن يتبع قسماً أعلى لتكوين شجرة."""
 
 from datetime import datetime, timezone
 
@@ -13,13 +12,11 @@ def _utcnow() -> datetime:
 
 
 class Department(Base):
-    """قسم داخل الهيكل التنظيمي."""
 
     __tablename__ = "departments"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
-        # مسمى مدير القسم (بدون FK لتفادي الدوران بين departments و positions)
     manager_position_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     parent_department_id: Mapped[int | None] = mapped_column(
         ForeignKey("departments.id"), nullable=True, index=True

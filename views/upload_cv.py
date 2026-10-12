@@ -1,4 +1,3 @@
-"""صفحة رفع السيرة الذاتية كمسار موجَّه من ثلاث خطوات: رفع ← معالجة (حالة لكل ملف) ← نتيجة وإجراء تالٍ."""
 
 import concurrent.futures
 import tempfile
@@ -15,7 +14,6 @@ from services.candidate_service import CandidateService
 from ui.navigation import go_to
 from views import candidate_profile
 
-# نتائج الرفع تُحفظ في session_state حتى لا تختفي عند أي rerun
 _RESULTS_KEY = "upload_cv_results"
 _POLL_SECONDS = 3
 
@@ -23,7 +21,6 @@ _OK, _DUPLICATE, _FAILED = "ok", "duplicate", "failed"
 
 
 def _process_one(tmp_path: str, filename: str) -> dict:
-    """يعالج ملفاً واحداً في جلسة قاعدة بيانات مستقلة. يعمل داخل Thread - لا ينادي أي دالة Streamlit."""
     try:
         with get_db_session() as session:
             candidate = CandidateService(session).process_cv_file(tmp_path, filename)
@@ -41,7 +38,6 @@ def _process_one(tmp_path: str, filename: str) -> dict:
 
 
 def _file_status(item: dict) -> str:
-    """نص حالة الملف الواحد للعرض."""
     if item["status"] == _DUPLICATE:
         return "⚠️ يحتاج مراجعة (مرشح مكرر)"
     if item["status"] == _FAILED:
@@ -54,7 +50,6 @@ def _file_status(item: dict) -> str:
 
 
 def _summary_counts(results: list[dict]) -> tuple[int, int, int]:
-    """(عدد المرشحين المضافين، عدد التحليلات المكتملة، عدد الملفات التي تحتاج مراجعة)."""
     added = [r for r in results if r["status"] == _OK]
     analyzed = sum(1 for r in added if not background_analysis.is_pending(r["id"]))
     review = sum(1 for r in results if r["status"] != _OK or r.get("warning"))
@@ -62,7 +57,6 @@ def _summary_counts(results: list[dict]) -> tuple[int, int, int]:
 
 
 def _status_panel() -> None:
-    """جدول حالة كل ملف + ملخص. يُحدَّث دورياً أثناء التحليل الخلفي ويتوقف عند انتهائه."""
     results: list[dict] = st.session_state.get(_RESULTS_KEY, [])
     if not results:
         return
@@ -104,7 +98,6 @@ def _render_status_with_polling() -> None:
 
 
 def _render_cards() -> None:
-    """بطاقة قابلة للتعديل لكل مرشح تم إنشاؤه (تفاصيل ثانوية داخل expander)."""
     added = [r for r in st.session_state.get(_RESULTS_KEY, []) if r["status"] == _OK]
     if not added:
         return
@@ -122,7 +115,6 @@ def _render_cards() -> None:
 
 
 def _run_batch(uploaded_files) -> None:
-    """يكتب الملفات المؤقتة، يعالجها بالتوازي مع شريط تقدم، ثم يجدول التحليل الخلفي."""
     tmp_jobs: list[tuple[str, str]] = []
     for uploaded_file in uploaded_files:
         with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp:
@@ -138,11 +130,10 @@ def _run_batch(uploaded_files) -> None:
             results.append(future.result())
             progress.progress(done / total, text=f"تمت معالجة {done} / {total}")
 
-    # بعد commit كل المرشحين نبدأ التحليل الشامل (لا ينافس الاستخلاص على حصة Gemini)
     for item in results:
         if item["status"] == _OK:
             background_analysis.submit(item["id"])
-            background_analysis.submit_photo(item["id"], item.pop("face_image", None))  # لا نخزّن الصور في session_state
+            background_analysis.submit_photo(item["id"], item.pop("face_image", None))
         else:
             item.pop("face_image", None)
 

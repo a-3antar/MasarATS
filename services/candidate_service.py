@@ -1,9 +1,3 @@
-"""
-خدمة المرشحين.
-تُدير سير عمل رفع السيرة الذاتية بالكامل:
-ملف → استخلاص نص وصورة → (AI أو استخلاص احتياطي بسيط) → تحقق Pydantic → حفظ في القاعدة.
-كما تدير تعديل المرشح وترجمة بياناته للعربية (مع بقاء الأصل الإنجليزي).
-"""
 
 import hashlib
 import io
@@ -44,7 +38,6 @@ logger = get_logger(__name__)
 
 PHOTOS_DIR = BASE_DIR / PHOTOS_SUBDIR
 
-# الحقول المسموح تعديلها من الواجهة (قائمة بيضاء لمنع تعديل حقول داخلية مثل file_hash)
 _EDITABLE_FIELDS = {
     "full_name", "email", "phone", "location", "age", "current_position", "total_experience_years",
     "summary", "skills", "technical_skills", "computer_skills", "managerial_skills",
@@ -53,14 +46,12 @@ _EDITABLE_FIELDS = {
     "applied_job", "status", "rating", "expected_salary", "notice_period_days", "recruiter_notes",
 }
 
-# الحقول التي تُترجم (أسماء الشركات والتواريخ تبقى كما هي)
 _TRANSLATABLE_FIELDS = (
     "current_position", "location", "summary",
     "technical_skills", "computer_skills", "managerial_skills", "soft_skills", "skills",
     "industries", "previous_positions", "languages", "marital_status", "military_status",
     "education", "experience",
 )
-# مفاتيح داخل عناصر education/experience لا نقبل ترجمتها
 _NON_TRANSLATED_KEYS = {"company", "start_date", "end_date", "graduation_year"}
 _TARGET_LANGUAGE_NAMES = {"ar": "Arabic"}
 
@@ -73,13 +64,6 @@ class CandidateService:
 
 
     def process_cv_file(self, file_path: str, original_filename: str) -> Candidate:
-        """
-        السير الكامل لمعالجة ملف سيرة ذاتية واحد وحفظه كمرشح.
-        يرفع ValidationError لملف غير مدعوم، أو DuplicateCandidateError لملف/مرشح مكرر.
-        تطابق الاسم فقط لا يمنع الحفظ، بل يوضع في candidate.duplicate_warning للعرض.
-        تحليل الذكاء الاصطناعي الشامل لا يتم هنا: تجدوله الواجهة في الخلفية بعد الـ commit
-        (services/background_analysis.py).
-        """
         extension = Path(original_filename).suffix.lower()
         if extension not in ALLOWED_CV_EXTENSIONS:
             raise ValidationError(f"صيغة الملف غير مدعومة حالياً: {extension}")
@@ -154,15 +138,13 @@ class CandidateService:
         self._candidates.add(candidate)
         self._assign_code(candidate)
 
-        # سمة مؤقتة (غير محفوظة في القاعدة) تقرؤها صفحة الرفع لعرض التنبيه
         candidate.duplicate_warning = " | ".join(m.describe() for m in matches) or None
 
         logger.info("Candidate created from CV upload: %s (%s)", candidate.full_name, original_filename)
-        candidate.pending_face_image = page_png  # سمة مؤقتة: تُسلَّم للخلفية بعد الـ commit
+        candidate.pending_face_image = page_png
         return candidate
 
     def _extract_profile(self, raw_text: str, fallback_name: str) -> CandidateProfile:
-        """يحاول الاستخلاص عبر Gemini إن توفر مفتاح API، وإلا يستخدم المستخلص الاحتياطي البسيط."""
         if not self._ai_available():
             logger.info("GEMINI_API_KEY not set - using basic fallback extraction.")
             return extract_basic_profile(raw_text, fallback_name)
@@ -179,7 +161,6 @@ class CandidateService:
 
     @staticmethod
     def _unique_field(experience: list[ExperienceItem], attr: str) -> list[str]:
-        """قيم حقل نصي (company / position) من قائمة الخبرات بنفس الترتيب وبدون تكرار."""
         values: list[str] = []
         seen: set[str] = set()
         for item in experience:
@@ -191,7 +172,6 @@ class CandidateService:
 
     @staticmethod
     def _assign_code(candidate: Candidate) -> None:
-        """كود مقروء فريد مثل CAND-2026-001 (يعتمد على id بعد الـ flush)."""
         candidate.candidate_code = f"CAND-{date.today().year}-{candidate.id:03d}"
 
     @staticmethod
@@ -203,21 +183,16 @@ class CandidateService:
         with open(file_path, "rb") as f:
             return hashlib.sha256(f.read()).hexdigest()
 
-    # ------------------------------------------------------------------ الصور
 
     @staticmethod
     def _save_photo(image_bytes: bytes, name_stem: str) -> str | None:
-        """
-        يحفظ الصورة بصيغة JPEG موحّدة ومصغّرة، ويرجع المسار النسبي لجذر المشروع.
-        يرجع None عند الفشل (صيغة غير مقروءة مثلاً) ولا يرفع استثناء.
-        """
         try:
             from PIL import Image
 
             with Image.open(io.BytesIO(image_bytes)) as source:
                 if source.mode in ("RGBA", "LA", "P"):
                     rgba = source.convert("RGBA")
-                    image = Image.new("RGB", rgba.size, "white")  # خلفية بيضاء بدل الأسود للشفافية
+                    image = Image.new("RGB", rgba.size, "white")
                     image.paste(rgba, mask=rgba.split()[-1])
                 else:
                     image = source.convert("RGB")
@@ -238,14 +213,12 @@ class CandidateService:
 
     @staticmethod
     def photo_absolute_path(candidate: Candidate) -> Path | None:
-        """المسار الكامل لصورة المرشح إن كانت موجودة فعلاً على القرص."""
         if not candidate.photo_path:
             return None
         path = BASE_DIR / candidate.photo_path
         return path if path.exists() else None
 
     def set_photo(self, candidate_id: int, image_bytes: bytes) -> None:
-        """استبدال صورة المرشح بصورة مرفوعة يدوياً."""
         candidate = self._get_or_raise(candidate_id)
         new_path = self._save_photo(image_bytes, f"candidate_{candidate_id}_{uuid.uuid4().hex[:8]}")
         if new_path is None:
@@ -258,13 +231,8 @@ class CandidateService:
         self._delete_photo_file(candidate.photo_path)
         candidate.photo_path = None
 
-    # ---------------------------------------------------------- الترجمة
 
     def translate_candidate(self, candidate_id: int, target: str = "ar") -> None:
-        """
-        يترجم بيانات المرشح إلى اللغة المطلوبة ويخزّنها في عمود translations
-        بجانب الأصل (الأصل لا يُلمس أبداً). يرفع AIServiceError عند الفشل.
-        """
         if target not in _TARGET_LANGUAGE_NAMES:
             raise ValidationError(f"لغة الترجمة غير مدعومة: {target}")
 
@@ -289,7 +257,7 @@ class CandidateService:
 
         translations = dict(candidate.translations or {})
         translations[target] = cleaned
-        candidate.translations = translations  # إعادة إسناد ضرورية لاكتشاف تغيّر عمود JSON
+        candidate.translations = translations
 
     @staticmethod
     def _positions_from_experience(experience: list[dict] | None) -> list[str]:
@@ -304,7 +272,6 @@ class CandidateService:
 
     @staticmethod
     def _clean_translation(original: dict, translated: dict) -> dict:
-        """يقبل من ناتج الترجمة فقط ما يطابق بنية الأصل (نفس النوع وعدد العناصر)، ويعيد الحقول غير المترجمة."""
         cleaned: dict = {}
         for key, orig in original.items():
             new = translated.get(key)
@@ -330,7 +297,6 @@ class CandidateService:
             cleaned[key] = new
         return cleaned
 
-    # ---------------------------------------------------------- CRUD والبحث
 
     def _get_or_raise(self, candidate_id: int) -> Candidate:
         candidate = self._candidates.get_by_id(candidate_id)
@@ -342,7 +308,6 @@ class CandidateService:
         return self._candidates.get_by_id(candidate_id)
 
     def update_candidate(self, candidate_id: int, **fields) -> Candidate:
-        """تعديل بيانات مرشح موجود (الحقول المسموحة فقط). تُمسح الترجمة القديمة إن تغيّر محتوى مترجَم."""
         candidate = self._get_or_raise(candidate_id)
 
         unknown = set(fields) - _EDITABLE_FIELDS
@@ -359,11 +324,10 @@ class CandidateService:
         for name, value in fields.items():
             setattr(candidate, name, value)
         if content_changed and candidate.translations:
-            candidate.translations = {}  # الترجمة القديمة لم تعد مطابقة للأصل
+            candidate.translations = {}
         return candidate
 
     def create_manual(self, **fields) -> Candidate:
-        """إنشاء مرشح يدوياً (بدون رفع ملف) - تُستخدم من نموذج إدخال يدوي في الواجهة."""
         if not fields.get("full_name"):
             raise ValidationError("الاسم الكامل مطلوب.")
         fields.setdefault("status", "New")
@@ -379,10 +343,6 @@ class CandidateService:
         return self._candidates.search(query) if query else self._candidates.list_all()
 
     def generate_ai_analysis(self, candidate_id: int, *, force: bool = False, retry: bool = False) -> dict:
-        """
-        يولّد التحليل ويخزّنه. لا يستدعي Gemini إلا إذا تغيّر input_hash أو model أو prompt_version
-        (أو force=True). retry=True للخلفية فقط (انتظار متزايد عند 429).
-        """
         from ai.analyzer import analyze_candidate, candidate_context
         from ai.prompts import CV_ANALYSIS_PROMPT_VERSION
 
@@ -421,12 +381,10 @@ class CandidateService:
 
     @staticmethod
     def _locate_photo(parser, file_path: str) -> tuple[tuple[bytes, str] | None, bytes | None]:
-        """صورة مستقلة إن وُجدت (سريع). وإلا نرجع صورة الصفحة لاكتشاف الوجه لاحقاً في الخلفية."""
         photo = parser.extract_photo(file_path)
         return photo, (None if photo else parser.render_first_page_png(file_path))
 
     def _extract_profile_from_file(self, file_path: str, parser, fallback_name: str) -> tuple[CandidateProfile, str]:
-        """نداء واحد: Gemini يقرأ الملف مباشرة. عند فشله نرجع للمسار القديم (Vision لكل صفحة)."""
         try:
             from ai.gemini_service import GeminiService
 
@@ -439,5 +397,4 @@ class CandidateService:
             return self._extract_profile(raw_text, fallback_name), raw_text
 
     def match_summary(self) -> dict[int, dict]:
-        """{candidate_id: {"best": أفضل مطابقة, "apps": عدد التقديمات}} لعرضها في جدول المرشحين."""
         return ApplicationRepository(self._session).summary_by_candidate()

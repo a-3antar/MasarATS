@@ -1,4 +1,3 @@
-"""استخلاص النص والصورة من ملفات PowerPoint (.pptx) باستخدام python-pptx."""
 
 import io
 
@@ -11,7 +10,6 @@ logger = get_logger(__name__)
 
 
 class PowerPointParser(DocumentParser):
-    """يستخلص النص من الشرائح (مربعات النص، الجداول، المجموعات) ومن الصور الشخصية."""
 
     def extract_text(self, file_path: str) -> str:
         try:
@@ -54,7 +52,6 @@ class PowerPointParser(DocumentParser):
                     parts.append(row_text)
 
     def extract_photo(self, file_path: str) -> tuple[bytes, str] | None:
-        """يبحث عن أنسب صورة شخصية في أول شرائح الملف."""
         try:
             from PIL import Image
             from pptx import Presentation

@@ -1,8 +1,3 @@
-"""
-مستخلص احتياطي بسيط لا يعتمد على أي AI - يُستخدم فقط عندما لا يوجد GEMINI_API_KEY
-حتى يبقى رفع السير الذاتية يعمل (بشكل مبسّط جداً: بريد + هاتف + النص كاملاً كـ summary)
-بدل أن يتوقف التطبيق كلياً بسبب غياب مفتاح API.
-"""
 
 import re
 
@@ -13,7 +8,6 @@ _PHONE_RE = re.compile(r"(\+?\d[\d \-()]{7,}\d)")
 
 
 def extract_basic_profile(raw_text: str, fallback_name: str) -> CandidateProfile:
-    """استخلاص أولي جداً (بريد/هاتف فقط عبر regex) بدون أي فهم دلالي للنص."""
     email_match = _EMAIL_RE.search(raw_text)
     phone_match = _PHONE_RE.search(raw_text)
 

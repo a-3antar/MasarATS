@@ -1,4 +1,3 @@
-"""مستودعا الأقسام والمسميات الوظيفية."""
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session

@@ -1,4 +1,3 @@
-"""خدمة الوظائف: إنشاء وتعديل وحذف ونسخ وإدراج الوظائف الشاغرة، وربطها بالهيكل التنظيمي."""
 
 from datetime import datetime, timezone
 
@@ -15,7 +14,6 @@ from repositories.job_repository import JobRepository
 from repositories.organization_repository import DepartmentRepository, PositionRepository
 from core.auth_context import enforce_bulk
 
-# الحقول المسموح تعديلها من الواجهة (قائمة بيضاء)
 _EDITABLE_FIELDS = {
     "title", "department", "location", "required_experience_years", "status", "description",
     "required_skills", "required_technical_skills", "required_computer_skills",
@@ -24,7 +22,6 @@ _EDITABLE_FIELDS = {
     "salary_min", "salary_max", "vacancies", "department_id", "position_id",
 }
 
-# الحقول التي تُنسخ عند "نسخ الوظيفة" (بدون embedding لأنه يُعاد حسابه)
 _DUPLICATED_FIELDS = _EDITABLE_FIELDS - {"title", "status"} | {
     "preferred_skills", "match_weights", "competency_weights",
 }
@@ -71,10 +68,6 @@ class JobService:
             raise ValidationError("عدد الشواغر يجب ألا يقل عن 1.")
 
     def _resolve_org_links(self, fields: dict) -> dict:
-        """
-        يتحقق من القسم والمسمى الوظيفي ويزامن نص القسم (department) مع اسم القسم المرتبط.
-        إن اختير مسمى بدون قسم يرث قسمه، وإن تعارضا يُرفض الحفظ.
-        """
         if "department_id" not in fields and "position_id" not in fields:
             return fields
 
@@ -97,7 +90,7 @@ class JobService:
                     if position.reports_to_position_id else None
                 )
                 if boss is not None:
-                    resolved["reports_to"] = boss.title  # تبعية آلية من الهيكل
+                    resolved["reports_to"] = boss.title
 
         if department_id is not None:
             department = self._departments.get_by_id(department_id)
@@ -122,10 +115,6 @@ class JobService:
         return job
 
     def create_from_position(self, position_id: int) -> Job:
-        """
-        ينشئ وظيفة مسودة من مسمى في الهيكل التنظيمي (طلب توظيف لسد الفجوة):
-        القسم والمسمى من الهيكل، وعدد الشواغر = الفجوة (وبحد أدنى شاغر واحد).
-        """
 
         position = self._positions.get_by_id(position_id)
         if position is None:
@@ -157,7 +146,6 @@ class JobService:
         return job
 
     def duplicate_job(self, job_id: int) -> Job:
-        """ينسخ الوظيفة كمسودة جديدة. لا تُنسخ التقديمات ولا المقابلات ولا الأسئلة ولا الـ embedding."""
         source = self._get_or_raise(job_id)
         values = {}
         for name in _DUPLICATED_FIELDS:
@@ -184,8 +172,7 @@ class JobService:
         return self._jobs.get_by_id(job_id)
 
     def delete_job(self, job_id: int) -> None:
-        """يحذف الوظيفة وكل التقديمات وأسئلة بنك الوظيفة وإجاباتها المرتبطة بها (للأدمن فقط)."""
-        enforce_bulk()  # حذف وظيفة يحذف سجلات كثيرة مرتبطة بها: من صلاحيات الأدمن فقط
+        enforce_bulk()
         job = self._get_or_raise(job_id)
         self._applications.delete_for_job(job_id)
 

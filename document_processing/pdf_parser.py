@@ -1,4 +1,3 @@
-"""استخلاص النص والصورة من ملفات PDF باستخدام PyMuPDF (fitz)، مع قراءة الصفحات الصورية عبر Gemini Vision."""
 
 from ai.vision import transcribe_image
 from core.constants import (
@@ -17,11 +16,10 @@ logger = get_logger(__name__)
 
 
 class PDFParser(DocumentParser):
-    """يستخلص النص من ملفات PDF: مباشرة للصفحات النصية، وعبر Gemini Vision للصفحات الصورية."""
 
     def extract_text(self, file_path: str) -> str:
         try:
-            import pymupdf as fitz  # الاسم الجديد للحزمة؛ "fitz" أصبح مهجوراً في PyMuPDF الحديثة
+            import pymupdf as fitz
         except ImportError as exc:
             raise DocumentParsingError("مكتبة PyMuPDF غير مثبّتة (pip install pymupdf).") from exc
 
@@ -52,7 +50,6 @@ class PDFParser(DocumentParser):
 
     @staticmethod
     def _read_page_with_vision(page) -> str:
-        """يحوّل الصفحة إلى صورة PNG ويرسلها لـ Gemini لنسخ نصها."""
         page_number = page.number + 1
         try:
             pixmap = page.get_pixmap(dpi=OCR_DPI)
@@ -63,12 +60,6 @@ class PDFParser(DocumentParser):
             ) from exc
         
     def extract_photo(self, file_path: str) -> tuple[bytes, str] | None:
-        """
-        يبحث عن الصورة الشخصية في أول صفحات الـ PDF:
-        1) صورة مستقلة لا تغطي معظم الصفحة.
-        2) إن لم توجد (صفحة مصدّرة كصورة كاملة): نكتشف الوجه في صورة الصفحة ونقصّه.
-        أي فشل لا يوقف رفع السيرة.
-        """
         try:
             import pymupdf as fitz
         except ImportError:
@@ -91,7 +82,6 @@ class PDFParser(DocumentParser):
                                 extracted["height"],
                             ))
 
-                # مساحة الصفحة بالبكسل تقريباً عند 72 dpi؛ نقارنها بمساحة الصورة بنفس الوحدة عبر نسبة تقريبية
                 standalone = pick_best_photo(
                     [(d, e, w, h) for d, e, w, h in found if not self._is_page_sized(w, h, first_page)]
                 )
@@ -105,11 +95,9 @@ class PDFParser(DocumentParser):
 
     @staticmethod
     def _is_page_sized(width: int, height: int, page) -> bool:
-        """هل الصورة تغطي معظم الصفحة؟ نقارن نسبة الأبعاد ومساحة الصورة بالنسبة لأبعاد الصفحة."""
         page_ratio = page.rect.width / page.rect.height
         image_ratio = width / height
         similar_shape = abs(page_ratio - image_ratio) / page_ratio < 0.1
-        # الصور الشخصية عادة أصغر بكثير من الصفحة؛ الصورة ذات شكل الصفحة وبأبعاد كبيرة هي صفحة كاملة
         large = width >= page.rect.width * PHOTO_MAX_PAGE_COVERAGE and height >= page.rect.height * PHOTO_MAX_PAGE_COVERAGE
         return similar_shape and large
 

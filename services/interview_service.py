@@ -1,5 +1,3 @@
-"""خدمة المقابلات: جدولة المقابلات، إدارة إجابات المرشح، تقييم الذكاء الاصطناعي وتقييم المُقابِل
-(منفصلان)، استيراد الإجابات من Word، تقييم الكفاءات، والدرجة النهائية. القرار النهائي بشري فقط."""
 
 from collections.abc import Callable
 from datetime import date
@@ -29,8 +27,8 @@ _EDITABLE_FIELDS = {
 }
 
 _MAX_ANSWER_SCORE = 5
-_OVERALL_SCALE = 100 / _MAX_ANSWER_SCORE  # تحويل متوسط (من 5) إلى درجة من 100
-_MAX_PRIOR_ANSWER_CHARS = 800  # اقتطاع كل إجابة سابقة في السياق حتى لا يتضخم الـ prompt
+_OVERALL_SCALE = 100 / _MAX_ANSWER_SCORE
+_MAX_PRIOR_ANSWER_CHARS = 800
 _AI_DIMENSIONS = ("technical_knowledge", "problem_solving", "communication", "practical_experience")
 
 AUTO, MANUAL = "auto", "manual"
@@ -66,13 +64,12 @@ class InterviewService:
             raise ValidationError("التقييم يجب أن يكون بين 1 و5.")
 
     def schedule(self, application_id: int, **fields) -> Interview:
-        """يجدول مقابلة وينقل التقديم تلقائياً إلى مرحلة «Interview» إن لم يكن قد تجاوزها أو رُفض."""
         application = self._applications.get_by_id(application_id)
         if application is None:
             raise ValidationError("التقديم غير موجود.")
         self._validate_fields(fields)
         interview = Interview(application_id=application_id, **fields)
-        self._interviews.add(interview)  # add() يعمل flush فيتوفر id
+        self._interviews.add(interview)
         interview.code = f"INT-{date.today().year}-{interview.id:04d}"
         if application.status in ("New", "Screening", "Shortlisted"):
             ApplicationService(self._session).change_status(
@@ -112,7 +109,6 @@ class InterviewService:
         return self._interviews.get_for_application(application_id)
 
     def history_for_candidate(self, candidate_id: int, exclude_id: int | None = None) -> list[dict]:
-        """مقابلات المرشح السابقة (كل الوظائف) لتجنب تكرار الأسئلة وفهم مساره."""
         return [
             {
                 "date": iv.scheduled_at.strftime("%Y-%m-%d") if iv.scheduled_at else "-",
@@ -125,15 +121,12 @@ class InterviewService:
             if iv.id != exclude_id
         ]
 
-    # ------------------------------------------------------------ إجابات المرشح وتقييمها
 
     def answers_map(self, interview_id: int) -> dict[int, InterviewAnswer]:
-        """إجابات هذه المقابلة كـ dict مفتاحه question_id، لدمجها مع بنك أسئلة الوظيفة عند العرض."""
         return {a.question_id: a for a in self._answers.get_for_interview(interview_id)}
 
     @staticmethod
     def _backfill_legacy(answer: InterviewAnswer) -> None:
-        """سجلات ما قبل الفصل بين تقييم AI والمُقابِل: ننقل eval_score إلى الحقل الصحيح مرة واحدة."""
         if answer.eval_score is None or answer.ai_score is not None or answer.manual_score is not None:
             return
         if answer.eval_method == "manual":
@@ -143,7 +136,6 @@ class InterviewService:
 
     @staticmethod
     def _sync_effective(answer: InterviewAnswer) -> None:
-        """الدرجة الفعلية = تقييم المُقابِل إن وُجد، وإلا تقييم الذكاء الاصطناعي."""
         if answer.manual_score:
             answer.eval_score, answer.eval_method = answer.manual_score, "manual"
         elif answer.ai_score:
@@ -169,7 +161,6 @@ class InterviewService:
         return answer
 
     def _prior_qa(self, interview_id: int, question_id: int) -> list[tuple[str, str]]:
-        """(سؤال، إجابة) لبقية إجابات المقابلة، كسياق مرجعي فقط عند تقييم سؤال."""
         pairs: list[tuple[str, str]] = []
         for other_id, other in self.answers_map(interview_id).items():
             text = (other.answer or "").strip()
@@ -181,10 +172,6 @@ class InterviewService:
         return pairs
 
     def evaluate_answer(self, interview_id: int, question_id: int, job) -> InterviewAnswer:
-        """
-        تحليل بالذكاء الاصطناعي: يكتب حقول ai_* فقط ولا يمسّ تقييم المُقابِل. الدرجة الفعلية
-        تبقى درجة المُقابِل إن كان قد قيّم السؤال.
-        """
         answer = self._get_or_create_answer(interview_id, question_id)
         if not (answer.answer or "").strip():
             raise ValidationError("أدخل إجابة المرشح أولاً.")
@@ -209,7 +196,6 @@ class InterviewService:
     def set_interviewer_review(
         self, interview_id: int, question_id: int, score: int | None, notes: str | None
     ) -> InterviewAnswer:
-        """تقييم المُقابِل (1-5 أو None لإلغائه) وملاحظاته على إجابة واحدة."""
         if score is not None and not (1 <= score <= _MAX_ANSWER_SCORE):
             raise ValidationError("التقييم يجب أن يكون بين 1 و5.")
         answer = self._get_or_create_answer(interview_id, question_id)
@@ -218,7 +204,6 @@ class InterviewService:
         self._sync_effective(answer)
         return answer
 
-    # ------------------------------------------------------------ استيراد الإجابات من Word
 
     def import_answers(
         self,
@@ -227,11 +212,6 @@ class InterviewService:
         answers_by_question: dict[int, str],
         on_progress: Callable[[int, int], None] | None = None,
     ) -> dict:
-        """
-        يحفظ الإجابات المستوردة ثم يقيّم كل واحدة بالذكاء الاصطناعي، ثم يحسب الدرجة النهائية.
-        تُحفظ كل الإجابات أولاً ثم تُقيَّم ليرى كل تقييم بقية الإجابات كسياق. فشل تقييم سؤال
-        واحد لا يوقف الباقي. يرجع: {"saved","evaluated","failed","unknown","overall_score"}.
-        """
         self._get_or_raise(interview_id)
         valid_ids = {q.id for q in self._job_questions.get_for_interview(interview_id)}
 
@@ -240,7 +220,7 @@ class InterviewService:
 
         for question_id, text in to_import.items():
             self.save_answer(interview_id, question_id, text)
-        self._session.flush()  # الجلسة بدون autoflush؛ نحتاج الإجابات مرئية للاستعلام داخل _prior_qa
+        self._session.flush()
 
         evaluated, failed = 0, []
         total = len(to_import)
@@ -260,14 +240,8 @@ class InterviewService:
             "unknown": unknown, "overall_score": overall,
         }
 
-    # ------------------------------------------------------------ الكفاءات والدرجة النهائية
 
     def competency_report(self, interview_id: int, job) -> dict:
-        """
-        درجة كل كفاءة (من 100) = متوسط الدرجات الفعلية لأسئلتها المجابة × 20.
-        overall = متوسط مرجّح بأوزان الوظيفة على الكفاءات المُقيَّمة فقط (بدون أوزان: متوسط بسيط).
-        يرجع {"scores": {name: value}, "overall": float | None}.
-        """
         answers = self.answers_map(interview_id)
         buckets: dict[str, list[int]] = {}
         for question in self._job_questions.get_for_interview(interview_id):
@@ -288,11 +262,6 @@ class InterviewService:
         return {"scores": scores, "overall": round(overall, 1)}
 
     def finalize_score(self, interview_id: int, *, respect_manual: bool = False) -> float | None:
-        """
-        الدرجة النهائية (من 100): متوسط الكفاءات المرجّح إن حدّدت الوظيفة أوزاناً وأُجيب على أسئلة
-        مربوطة بكفاءات، وإلا متوسط كل الدرجات الفعلية × 20.
-        respect_manual=True: لا يستبدل درجة عدّلها المُقابِل يدوياً (يُستخدم عند الاستيراد التلقائي).
-        """
         interview = self._get_or_raise(interview_id)
         if respect_manual and interview.overall_method == MANUAL and interview.overall_score is not None:
             return interview.overall_score
@@ -318,10 +287,6 @@ class InterviewService:
     def set_overall(
         self, interview_id: int, score: float | None, notes: str | None, decision: str | None = None
     ) -> Interview:
-        """
-        تعديل بشري للتقييم النهائي: score=None يبقي الدرجة كما هي، decision=None يبقي القرار كما هو.
-        الدرجة المعدّلة تُوسَم "manual" فلا يستبدلها الاستيراد التلقائي لاحقاً.
-        """
         interview = self._get_or_raise(interview_id)
         if score is not None:
             if not (0 <= score <= 100):
@@ -336,7 +301,6 @@ class InterviewService:
         return interview
 
     def answered_stats(self, interview_id: int) -> tuple[int, int]:
-        """(عدد الإجابات المقيَّمة، عدد الإجابات المكتوبة) لعرضها بجانب الدرجة النهائية."""
         answers = self._answers.get_for_interview(interview_id)
         written = [a for a in answers if (a.answer or "").strip()]
         scored = [a for a in answers if a.eval_score is not None]
@@ -345,7 +309,6 @@ class InterviewService:
     def previous_interviews(
         self, application_id: int, before: datetime | None = None, exclude_id: int | None = None
     ) -> list[dict]:
-        """مقابلات نفس المرشح لنفس الوظيفة قبل التاريخ المعطى (أو قبل الآن)، الأحدث أولاً، مع عدد الأيام."""
         reference = _naive(before) or datetime.now(timezone.utc).replace(tzinfo=None)
         rows = []
         for iv in self._interviews.get_for_application(application_id):

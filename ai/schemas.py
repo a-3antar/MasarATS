@@ -1,4 +1,3 @@
-"""مخططات Pydantic لمخرجات استخلاص السيرة الذاتية. تُستخدم للتحقق من استجابة Gemini قبل حفظها."""
 
 from typing import Any
 import re
@@ -21,11 +20,6 @@ class EducationItem(BaseModel):
 
 
 def _coerce_to_list(value: Any) -> Any:
-    """
-    Gemini يُرجع أحياناً كائناً مفرداً (dict) بدل قائمة عندما يكون هناك عنصر واحد فقط
-    (مثلاً تعليم واحد أو خبرة واحدة)، رغم طلب schema بقائمة صراحة. نطبّع القيمة هنا
-    بدل رفض الاستجابة بالكامل وفقدان كل البيانات الأخرى الصحيحة.
-    """
     if value is None:
         return []
     if isinstance(value, dict):
@@ -34,7 +28,6 @@ def _coerce_to_list(value: Any) -> Any:
 
 
 def _coerce_to_str_list(value: Any) -> Any:
-    """يطبّع قوائم النصوص: None → قائمة فارغة، نص مفرد → قائمة، ويحذف الفارغ والمكرر."""
     if value is None:
         return []
     if isinstance(value, str):
@@ -53,30 +46,22 @@ def _coerce_to_str_list(value: Any) -> Any:
 
 
 class CandidateProfile(BaseModel):
-    """الشكل المهيكل الذي نطلبه من الذكاء الاصطناعي بعد قراءة نص السيرة الذاتية.
-
-    قاعدة أساسية: لا تخمين. أي حقل غير موجود بوضوح في النص يجب أن يكون null
-    أو قائمة فارغة، وليس قيمة مُستنتَجة. (الاستثناء الوحيد: المهارات الشخصية تُستخلص
-    من المسؤوليات المذكورة صراحة.)
-    """
 
     full_name: str | None = None
     email: str | None = None
     phone: str | None = None
     linkedin_url: str | None = None
     location: str | None = None
-    birth_date: str | None = None   # كما هو مكتوب: "Sep 1987" أو "15/03/1987"
-    age: int | None = None          # يُستخدم فقط إن كُتب العمر صراحة
+    birth_date: str | None = None
+    age: int | None = None
     
     current_position: str | None = None
     total_experience_years: float | None = None
    
-    # الحالة الشخصية
     marital_status: str | None = None
     military_status: str | None = None
     languages: list[str] = Field(default_factory=list)
 
-    # المهارات مقسّمة حسب النوع - وحقل skills للمهارات التي لا تنتمي لأي فئة
     technical_skills: list[str] = Field(default_factory=list)
     computer_skills: list[str] = Field(default_factory=list)
     managerial_skills: list[str] = Field(default_factory=list)
@@ -105,7 +90,6 @@ class CandidateProfile(BaseModel):
     @field_validator("age", mode="before")
     @classmethod
     def _normalize_age(cls, value: Any) -> Any:
-        """يطبّع العمر إلى رقم صحيح، ويتجاهل القيم غير المنطقية بدل رفض الاستجابة كلها."""
         if value is None or isinstance(value, bool):
             return None
         if isinstance(value, (int, float)):
@@ -116,7 +100,6 @@ class CandidateProfile(BaseModel):
         return age if age is not None and 15 <= age <= 80 else None
 
 class CandidateSearchFilters(BaseModel):
-    """فلاتر بحث مهيكلة يستخرجها الذكاء الاصطناعي من طلب بلغة طبيعية."""
 
     role: str | None = None
     experience_min: float | None = None
@@ -135,9 +118,9 @@ _VALID_DIFFICULTIES = {"low": "Low", "medium": "Medium", "high": "High"}
 
 class InterviewQuestion(BaseModel):
     question: str
-    rationale: str | None = None  # سبب هذا السؤال (مرتبط بأي جزء من الوظيفة أو السيرة الذاتية)
-    competency: str | None = None  # الكفاءة التي يقيسها السؤال (اسم قصير بالإنجليزية)
-    difficulty: str | None = None  # Low / Medium / High
+    rationale: str | None = None
+    competency: str | None = None
+    difficulty: str | None = None
 
     @field_validator("competency", mode="before")
     @classmethod
@@ -148,20 +131,17 @@ class InterviewQuestion(BaseModel):
     @field_validator("difficulty", mode="before")
     @classmethod
     def _normalize_difficulty(cls, value: Any) -> Any:
-        """يطبّع الصعوبة إلى Low/Medium/High، والقيمة غير المفهومة تصبح None بدل رفض الاستجابة كلها."""
         return _VALID_DIFFICULTIES.get(str(value or "").strip().lower())
 
 class InterviewQuestions(BaseModel):
-    """أسئلة مقابلة مبنية على وصف الوظيفة وسيرة المرشح الفعلية - لا تخترع إنجازات غير مذكورة."""
 
     technical: list[InterviewQuestion] = Field(default_factory=list)
     behavioral: list[InterviewQuestion] = Field(default_factory=list)
     leadership: list[InterviewQuestion] = Field(default_factory=list)
     cv_specific: list[InterviewQuestion] = Field(default_factory=list)
-    risk_areas: list[str] = Field(default_factory=list)  # نقاط غامضة أو تحتاج توضيحاً في السيرة 
+    risk_areas: list[str] = Field(default_factory=list)
 
 class CandidateAnalysis(BaseModel):
-    """تحليل شامل للمرشح: مستوى وظيفي، نقاط قوة مبنية على أدلة، فجوات محتملة (غير موثّقة وليست غياباً مؤكداً)، ووظائف مناسبة."""
 
     career_level: str | None = None
     strengths: list[str] = Field(default_factory=list)
@@ -174,7 +154,6 @@ class CandidateAnalysis(BaseModel):
         return _coerce_to_str_list(value)
 
 class JobRequirements(BaseModel):
-    """متطلبات وظيفة مهيكلة يستخرجها الذكاء الاصطناعي من وصف حر غير منظم."""
 
     title: str | None = None
     department: str | None = None
@@ -200,7 +179,6 @@ class JobRequirements(BaseModel):
         return _coerce_to_str_list(value)
 
 class AnswerEvaluation(BaseModel):
-    """تقييم إجابة مرشح على سؤال مقابلة واحد: درجة 1-5، أبعاد من 100، نقاط قوة/تحقق، وسؤال متابعة."""
 
     score: int = Field(ge=1, le=5)
     technical_knowledge: int | None = None
@@ -232,7 +210,6 @@ class AnswerEvaluation(BaseModel):
     )
     @classmethod
     def _clamp_dimension(cls, value: Any) -> Any:
-        """بُعد من 0 إلى 100؛ القيمة غير الصالحة تصبح None بدل رفض الاستجابة كلها."""
         if value is None or isinstance(value, bool):
             return None
         try:

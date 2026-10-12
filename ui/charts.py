@@ -1,4 +1,3 @@
-"""بناء رسوم Plotly للوحة المعلومات. الدوال هنا لا تصل للقاعدة، تستقبل بيانات جاهزة فقط."""
 
 import plotly.graph_objects as go
 
@@ -35,7 +34,6 @@ def availability_chart(rows: list[dict], title: str = "توفر المهارات
     return _base(fig, title)
 
 def donut_chart(items: list[tuple[str, int, str]], center_text: str, title: str = "") -> go.Figure:
-    """دونات بنص في المنتصف. items = [(التسمية، القيمة، اللون)]."""
     fig = go.Figure(go.Pie(
         labels=[label for label, _, _ in items],
         values=[value for _, value, _ in items],

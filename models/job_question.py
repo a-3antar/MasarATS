@@ -1,4 +1,3 @@
-"""نموذج سؤال مقابلة مرتبط بوظيفة - بنك أسئلة قابل لإعادة الاستخدام مع أي مرشح متقدم لنفس الوظيفة."""
 
 from datetime import datetime, timezone
 
@@ -13,27 +12,23 @@ def _utcnow() -> datetime:
 
 
 class JobQuestion(Base):
-    """سؤال ضمن بنك أسئلة وظيفة معينة."""
 
     __tablename__ = "job_questions"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"), nullable=False, index=True)
-    # السؤال تابع لمقابلة واحدة فقط (NULL = سجل قديم من بنك الوظيفة، يُحوَّل عند التشغيل)
     interview_id: Mapped[int | None] = mapped_column(ForeignKey("interviews.id"), nullable=True, index=True)
-    # إن كان السؤال مستورداً من مقابلة أخرى (للتتبع والمقارنة)
     imported_from_interview_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     question: Mapped[str] = mapped_column(Text, nullable=False)
-    category: Mapped[str | None] = mapped_column(String(30), nullable=True)  # cv_specific/technical/behavioral/leadership أو null (يدوي)
+    category: Mapped[str | None] = mapped_column(String(30), nullable=True)
     rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source: Mapped[str] = mapped_column(String(10), default="manual", nullable=False)  # "ai" أو "manual"
+    source: Mapped[str] = mapped_column(String(10), default="manual", nullable=False)
 
-    # نوع السؤال: text / choice / rating (NULL في السجلات القديمة = text)
     question_type: Mapped[str | None] = mapped_column(String(10), default="text", nullable=True)
-    options: Mapped[list | None] = mapped_column(JSON, nullable=True)  # خيارات سؤال الاختيار من متعدد
-    competency: Mapped[str | None] = mapped_column(String(100), nullable=True)  # الكفاءة التي يقيسها السؤال
-    difficulty: Mapped[str | None] = mapped_column(String(10), nullable=True)  # Low / Medium / High
+    options: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    competency: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    difficulty: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 

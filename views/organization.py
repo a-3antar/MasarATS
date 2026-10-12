@@ -1,5 +1,3 @@
-"""صفحة الهيكل التنظيمي بنفس تصميم صفحتي الوظائف والمرشحين: مؤشرات + بحث وفلاتر + جدول مع لوحة تفاصيل + بطاقات.
-ربط الهيكل بالوظائف: من فجوة القوى العاملة تُنشأ وظيفة مسودة (طلب توظيف) ويُبحث عن مرشحين بمحرك المطابقة نفسه."""
 
 import html
 
@@ -32,7 +30,6 @@ _JOBS_SELECTED_KEY, _MATCHING_JOB_KEY = "jobs_selected_id", "m_job_select"
 _JOB_STATUS_LABELS = {"Draft": "مسودة", "Open": "مفتوحة", "On Hold": "معلّقة", "Closed": "مغلقة"}
 
 
-# ------------------------------------------------------------ بيانات وكاش
 
 @st.cache_data(ttl=_CACHE_TTL, show_spinner=False)
 def _overview() -> dict:
@@ -41,8 +38,6 @@ def _overview() -> dict:
 
 
 def _invalidate() -> None:
-    """مسح كاش الهيكل وكاش الوظائف (الهيكل مرتبط بالوظائف فيتأثر الاثنان).
-    مسجّلة في ui.helpers._CACHE_CLEARERS فلا تستدعِ invalidate_all من هنا."""
     _overview.clear()
     try:
         from views import jobs as _jobs
@@ -75,7 +70,6 @@ def _position_options(overview: dict, exclude_id: int | None = None) -> dict[str
     }
 
 
-# ------------------------------------------------------------ نوافذ الأقسام
 
 @st.dialog("➕ إضافة قسم جديد")
 def _create_department_dialog() -> None:
@@ -121,7 +115,6 @@ def _edit_department_dialog(dept_id: int) -> None:
         run_action(lambda s: OrganizationService(s).delete_department(dept_id), "تم حذف القسم 🗑️")
 
 
-# ------------------------------------------------------------ نوافذ المسميات الوظيفية
 
 def _position_form_fields(key: str, overview: dict, pos: dict | None) -> dict:
     depts = _dept_options(overview)
@@ -179,10 +172,8 @@ def _edit_position_dialog(position_id: int) -> None:
         run_action(lambda s: OrganizationService(s).delete_position(position_id), "تم الحذف 🗑️")
 
 
-# ------------------------------------------------------------ ربط الهيكل بالوظائف والبحث عن مرشحين
 
 def _create_job_for_position(position_id: int) -> None:
-    """ينشئ وظيفة مسودة من المسمى (شواغرها = الفجوة) لتكمل متطلباتها من صفحة الوظائف."""
     try:
         with get_db_session() as session:
             JobService(session).create_from_position(position_id)
@@ -218,7 +209,6 @@ def _run_search(job_id: int) -> None:
 
 
 def _render_candidate_search(pos: dict, prefix: str) -> None:
-    """بحث مرشحين لسد فجوة مسمى: يعمل على وظيفة نشطة مرتبطة به (وإلا يعرض إنشاءها)."""
     active = [j for j in pos["jobs"] if j["status"] != _CLOSED]
     if not active:
         st.info("لا توجد وظيفة نشطة مرتبطة بهذا المسمى. أنشئ وظيفة من الفجوة ثم أكمل متطلباتها.")
@@ -260,7 +250,6 @@ def _render_candidate_search(pos: dict, prefix: str) -> None:
     )
 
 
-# ------------------------------------------------------------ المؤشرات والفلاتر
 
 def _render_kpis(k: dict) -> None:
     cards = [
@@ -306,14 +295,11 @@ def _filter_positions(positions: list[dict], f: dict) -> list[dict]:
     ]
 
 
-# ------------------------------------------------------------ تبويب المسميات (جدول + لوحة تفاصيل)
 def _table_key(rows: list[dict]) -> str:
-    """مفتاح يتغير بتغير الصفوف المعروضة (فلتر/بحث) فيُصفَّر التحديد القديم."""
     return "org_positions_table_" + str(hash(tuple(r["id"] for r in rows)) & 0xFFFFFF)
 
 
 def _sync_selection(rows: list[dict], table_key: str) -> None:
-    """يقرأ الصف المحدد من الجدول قبل رسم اللوحة (حالة الـ widget متاحة من بداية الدورة)."""
     try:
         picked = st.session_state[table_key]["selection"]["rows"]
     except (KeyError, TypeError):
@@ -353,7 +339,7 @@ def _render_positions_tab(rows: list[dict]) -> None:
         st.info("لا توجد مسميات مطابقة للبحث والفلاتر الحالية.")
         return
     table_key = _table_key(rows)
-    _sync_selection(rows, table_key)  # قبل تحديد اللوحة، وهذا هو الإصلاح
+    _sync_selection(rows, table_key)
 
     by_id = {r["id"]: r for r in rows}
     selected = by_id.get(st.session_state.get(_SELECTED_POS_KEY)) or rows[0]
@@ -404,7 +390,6 @@ def _render_position_panel(pos: dict) -> None:
         _render_candidate_search(pos, "pos")
 
 
-# ------------------------------------------------------------ تبويب الفجوات
 
 def _render_gap_tab(rows: list[dict]) -> None:
     gaps = sorted((p for p in rows if p["gap"] > 0), key=lambda p: p["gap"], reverse=True)
@@ -426,7 +411,6 @@ def _render_gap_tab(rows: list[dict]) -> None:
                 _render_candidate_search(pos, "gap")
 
 
-# ------------------------------------------------------------ تبويبا الشجرة والأقسام
 _TREE_MODES = {"🏢 حسب الأقسام": "departments", "🔗 حسب خطوط التبعية": "reporting"}
 
 
@@ -460,7 +444,6 @@ def _render_departments_tab(overview: dict) -> None:
                 _edit_department_dialog(dept["id"])
 
 
-# ------------------------------------------------------------ الصفحة الرئيسية
 
 def render() -> None:
     ui.inject_css()

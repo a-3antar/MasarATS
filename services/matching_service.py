@@ -1,4 +1,3 @@
-"""خدمة المطابقة: تشغّل محرك المطابقة وتحفظ (أو تحدّث) نتائج التقديم القابلة للتفسير."""
 
 from sqlalchemy.orm import Session
 
@@ -17,8 +16,6 @@ class MatchingService:
 
     @staticmethod
     def _build_engine():
-        """Hybrid (قواعد + دلالي) إن توفر GEMINI_API_KEY، وإلا Rule-based فقط - نفس نمط
-        fallback المتبع في بقية المشروع عند غياب مفتاح الذكاء الاصطناعي."""
         from config.settings import get_settings
 
         settings = get_settings()
@@ -28,7 +25,6 @@ class MatchingService:
         return RuleBasedMatchingEngine()
 
     def match_all_candidates_to_job(self, job: Job, candidates: list[Candidate]) -> list[dict]:
-        """يحسب درجة مطابقة كل المرشحين لوظيفة واحدة، ويحفظها كسجل application، ويرجع النتائج مرتبة."""
         if hasattr(self._engine, "warm_up_candidates"):
             self._engine.warm_up_candidates(candidates, job)
 
@@ -42,7 +38,6 @@ class MatchingService:
         return results
 
     def rank_candidates_for_job(self, job: Job, candidates: list[Candidate]) -> list[dict]:
-        """يرتّب المرشحين حسب مطابقتهم لوظيفة بدون حفظ أي تقديم (للعرض فقط، مثل البحث من فجوة القوى العاملة)."""
         if hasattr(self._engine, "warm_up_candidates"):
             self._engine.warm_up_candidates(candidates, job)
 
@@ -51,7 +46,6 @@ class MatchingService:
         return results
 
     def match_candidate_to_all_jobs(self, candidate: Candidate, jobs: list[Job]) -> list[dict]:
-        """يحسب درجة مطابقة مرشح واحد مقابل كل الوظائف المعطاة، ويحفظها كسجل application، ويرجع النتائج مرتبة."""
         if hasattr(self._engine, "warm_up_jobs"):
             self._engine.warm_up_jobs(candidate, jobs)
 
@@ -79,7 +73,6 @@ class MatchingService:
         return application
 
     def top_jobs_for_candidate(self, candidate: Candidate, jobs: list[Job], limit: int = 5) -> list[dict]:
-        """أفضل الوظائف لمرشح واحد للعرض فقط (لا تحفظ سجلات application)."""
         if hasattr(self._engine, "warm_up_jobs"):
             self._engine.warm_up_jobs(candidate, jobs)
 
@@ -88,7 +81,6 @@ class MatchingService:
         return results[:limit]
 
     def rank_jobs_for_candidate(self, candidate: Candidate, jobs: list[Job]) -> list[dict]:
-        """يرتّب الوظائف حسب مطابقتها لمرشح واحد بدون حفظ أي شيء في القاعدة (للعرض فقط)."""
         if hasattr(self._engine, "warm_up_jobs"):
             self._engine.warm_up_jobs(candidate, jobs)
 

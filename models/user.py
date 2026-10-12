@@ -1,4 +1,3 @@
-"""نموذج المستخدم (جدول users) — يمثل حسابات الدخول إلى النظام."""
 
 from datetime import datetime, timezone
 
@@ -14,7 +13,6 @@ def _utcnow() -> datetime:
 
 
 class User(Base):
-    """مستخدم مسجّل في نظام SmartATS AI."""
 
     __tablename__ = "users"
 
@@ -28,14 +26,11 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), nullable=False, default=UserRole.RECRUITER.value)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    # صلاحيات صفحات مخصصة لهذا المستخدم (مفاتيح الصفحات). NULL = الافتراضي حسب الدور.
     allowed_pages: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
-    # "تذكرني": hash فقط (bcrypt) وليس التوكن الخام.
     remember_token_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     remember_token_expires: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # استعادة كلمة المرور: hash لكود من 6 أرقام + انتهاء + عدد المحاولات الخاطئة
     reset_code_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reset_code_expires: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reset_attempts: Mapped[int | None] = mapped_column(Integer, default=0, nullable=True)

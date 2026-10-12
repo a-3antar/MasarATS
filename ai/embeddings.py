@@ -1,4 +1,3 @@
-"""حساب التمثيل الدلالي (Embedding) عبر Gemini - يُستخدم فقط من طبقة المطابقة الدلالية."""
 
 import math
 
@@ -12,7 +11,6 @@ logger = get_logger(__name__)
 
 
 def embed_text(text: str) -> list[float]:
-    """يرجع متجه التمثيل الدلالي للنص. يرفع AIServiceError عند غياب المفتاح أو فشل النداء."""
     settings = get_settings()
     if not settings.gemini_api_key and not settings.alt_gemini_api_key:
         raise AIServiceError("المطابقة الدلالية تحتاج GEMINI_API_KEY في ملف .env")
@@ -34,7 +32,6 @@ def embed_text(text: str) -> list[float]:
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
-    """تشابه جيب التمام بين متجهين. يرجع 0.0 عند عدم التطابق في الطول أو متجه فارغ."""
     if not a or not b or len(a) != len(b):
         return 0.0
     dot = sum(x * y for x, y in zip(a, b))

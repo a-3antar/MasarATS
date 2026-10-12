@@ -1,10 +1,3 @@
-"""
-تبديل دوري (round-robin) بين مفاتيح Gemini API المتاحة، بشكل آمن للـ Threads.
-
-المشكلة التي يحلّها هذا الملف: عند معالجة عدة سير ذاتية بالتوازي (ThreadPoolExecutor
-في candidate_service.py و upload_cv.py)، يجب توزيع نداءات Gemini على أكثر من مفتاح
-واحد إن توفر، بدل ضرب مفتاح واحد بكل الحمل والوصول لحد الحصة (rate limit) بسرعة.
-"""
 
 import itertools
 import threading
@@ -25,7 +18,6 @@ def _build_key_cycle() -> itertools.cycle:
 
 
 def get_next_key() -> str:
-    """يرجع المفتاح التالي بالتبادل. يرفع AIServiceError إن لم يوجد أي مفتاح مضبوط."""
     global _key_cycle
     with _lock:
         if _key_cycle is None:

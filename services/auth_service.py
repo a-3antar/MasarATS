@@ -1,8 +1,3 @@
-"""
-خدمة المصادقة (Authentication Service).
-الطبقة الوحيدة التي تتعامل معها الواجهة لتسجيل الدخول، إنشاء الحساب، تغيير كلمة المرور،
-استعادتها بالبريد، وإدارة المستخدمين وصلاحياتهم (للأدمن).
-"""
 
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -22,7 +17,6 @@ from services.email_service import EmailService
 
 logger = get_logger(__name__)
 
-# مدة صلاحية "تذكرني" - بعدها يُطلب تسجيل الدخول من جديد حتى لو كانت الكوكيز موجودة
 REMEMBER_TOKEN_DAYS = 30
 MIN_PASSWORD_LENGTH = 6
 RESET_CODE_MINUTES = 30
@@ -32,18 +26,15 @@ _VALID_ROLES = {role.value for role in UserRole}
 
 
 def _aware(value: datetime) -> datetime:
-    """SQLite يعيد التاريخ بدون tzinfo؛ نطبّعه كـ UTC قبل المقارنة."""
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 class AuthService:
-    """منطق العمل الخاص بتسجيل المستخدمين ومصادقتهم وإدارتهم."""
 
     def __init__(self, session: Session) -> None:
         self._session = session
         self._users = UserRepository(session)
 
-    # ---------------------------------------------------------- التسجيل والدخول
 
     @staticmethod
     def _validate_password(password: str) -> None:
@@ -58,10 +49,6 @@ class AuthService:
         password: str,
         role: UserRole = UserRole.RECRUITER,
     ) -> User:
-        """
-        تسجيل مستخدم جديد.
-        يرفع UserAlreadyExistsError إذا كان اسم المستخدم أو البريد مستخدماً مسبقاً.
-        """
         username = username.strip().lower()
         email = email.strip().lower()
 
@@ -85,10 +72,6 @@ class AuthService:
         return user
 
     def authenticate(self, username: str, password: str) -> User:
-        """
-        التحقق من بيانات الدخول. يرجع المستخدم عند النجاح.
-        يرفع AuthenticationError عند بيانات خاطئة، أو InactiveUserError إذا كان الحساب معطلاً.
-        """
         username = username.strip().lower()
         user = self._users.get_by_username(username)
 
@@ -104,16 +87,10 @@ class AuthService:
         return user
 
     def has_any_user(self) -> bool:
-        """هل يوجد أي مستخدم مسجّل بعد؟ تُستخدم لعرض شاشة إنشاء أول حساب Admin."""
         return len(self._users.list_all(limit=1)) > 0
 
-    # ---------------------------------------------------------- "تذكرني"
 
     def create_remember_token(self, user_id: int) -> str:
-        """
-        يولّد توكن عشوائي جديد للمستخدم ويخزّن نسخته المشفّرة فقط (bcrypt) في القاعدة.
-        يُرجع التوكن الخام مرة واحدة فقط - هذا ما يُخزَّن في كوكيز المتصفح.
-        """
         user = self._get_or_raise(user_id)
         token = secrets.token_urlsafe(32)
         user.remember_token_hash = hash_password(token)
@@ -121,7 +98,6 @@ class AuthService:
         return token
 
     def authenticate_by_token(self, user_id: int, token: str) -> User | None:
-        """يتحقق من توكن "تذكرني" القادم من الكوكيز. يرجع None بصمت عند أي فشل (لا يرفع استثناء)."""
         user = self._users.get_by_id(user_id)
         if user is None or not user.is_active or not user.remember_token_hash:
             return None
@@ -135,16 +111,13 @@ class AuthService:
         return user
 
     def clear_remember_token(self, user_id: int) -> None:
-        """إبطال توكن "تذكرني" الحالي (تسجيل الخروج الكامل، أو عند الاشتباه بمشكلة أمنية)."""
         user = self._users.get_by_id(user_id)
         if user is not None:
             user.remember_token_hash = None
             user.remember_token_expires = None
 
-    # ---------------------------------------------------------- تغيير كلمة المرور
 
     def _set_password(self, user: User, new_password: str) -> None:
-        """يضبط كلمة مرور جديدة ويُبطل "تذكرني" وأي كود استعادة قائم."""
         self._validate_password(new_password)
         user.password_hash = hash_password(new_password)
         user.remember_token_hash = None
@@ -154,7 +127,6 @@ class AuthService:
         user.reset_attempts = 0
 
     def change_password(self, user_id: int, current_password: str, new_password: str) -> None:
-        """تغيير المستخدم كلمة مروره بنفسه (يتطلب كلمة المرور الحالية)."""
         user = self._get_or_raise(user_id)
         if not verify_password(current_password or "", user.password_hash):
             raise AuthenticationError("كلمة المرور الحالية غير صحيحة.")
@@ -164,18 +136,12 @@ class AuthService:
         logger.info("User %s changed own password", user.username)
 
     def admin_set_password(self, user_id: int, new_password: str) -> None:
-        """إعادة تعيين كلمة مرور مستخدم بواسطة الأدمن."""
         user = self._get_or_raise(user_id)
         self._set_password(user, new_password)
         logger.info("Password reset by admin for user %s", user.username)
 
-    # ---------------------------------------------------------- نسيت كلمة المرور (بالبريد)
 
     def request_password_reset(self, email: str) -> None:
-        """
-        يرسل كود من 6 أرقام للبريد إن كان مسجّلاً. لا يكشف إن كان البريد موجوداً أم لا
-        (يعود بصمت). يرفع ConfigurationError إن لم يُضبط SMTP.
-        """
         user = self._users.get_by_email((email or "").strip().lower())
         if user is None or not user.is_active:
             logger.warning("Password reset requested for unknown/inactive email")
@@ -197,7 +163,6 @@ class AuthService:
         logger.info("Password reset code sent to user %s", user.username)
 
     def reset_password_with_code(self, email: str, code: str, new_password: str) -> None:
-        """يتحقق من الكود ويضبط كلمة المرور الجديدة. رسالة خطأ موحّدة لأي فشل."""
         invalid = AuthenticationError("الكود غير صحيح أو منتهي الصلاحية.")
         user = self._users.get_by_email((email or "").strip().lower())
         if user is None or not user.reset_code_hash or user.reset_code_expires is None:
@@ -210,13 +175,12 @@ class AuthService:
 
         if not verify_password((code or "").strip(), user.reset_code_hash):
             user.reset_attempts = (user.reset_attempts or 0) + 1
-            self._session.commit()  # نحفظ عداد المحاولات رغم رفع الاستثناء
+            self._session.commit()
             raise invalid
 
         self._set_password(user, new_password)
         logger.info("Password reset via email code for user %s", user.username)
 
-    # ---------------------------------------------------------- إدارة المستخدمين (للأدمن)
 
     def list_users(self) -> list[User]:
         return self._users.list_all(limit=1000)
@@ -231,10 +195,6 @@ class AuthService:
         self, user_id: int, *, role: str, is_active: bool,
         allowed_pages: list[str] | None, acting_user_id: int,
     ) -> User:
-        """
-        يغيّر دور المستخدم وحالته وصفحاته المسموحة (None = الافتراضي حسب الدور).
-        يمنع الأدمن من تعطيل نفسه أو إزالة آخر أدمن نشط.
-        """
         user = self._get_or_raise(user_id)
         if role not in _VALID_ROLES:
             raise ValidationError(f"دور غير صالح: {role}")

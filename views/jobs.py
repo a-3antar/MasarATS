@@ -1,6 +1,3 @@
-"""صفحة الوظائف: مؤشرات، بحث وفلاتر، جدول/بطاقات، لوحة تفاصيل، تحليل توظيف وقمع لكل وظيفة.
-الإضافة والتعديل داخل نوافذ (dialog) تحمل نموذج الوظيفة وتوليد الذكاء الاصطناعي وبنك الأسئلة.
-القسم والمسمى الوظيفي يُختاران من الهيكل التنظيمي (department_id / position_id)."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -23,7 +20,6 @@ from views import job_candidates
 from ui.guards import is_admin
 from ui.helpers import run_action, split_items
 
-# نفس فئات مهارات المرشح حتى تكون المطابقة متناسقة
 _LIST_FIELDS: list[tuple[str, str]] = [
     ("🛠️ المهارات الفنية المطلوبة", "required_technical_skills"),
     ("💻 مهارات الكمبيوتر المطلوبة", "required_computer_skills"),
@@ -32,7 +28,7 @@ _LIST_FIELDS: list[tuple[str, str]] = [
     ("➕ مهارات أخرى مطلوبة", "required_skills"),
     ("🏭 مجالات العمل المفضلة", "preferred_industries"),
 ]
-_DEFAULT_STATUS_INDEX = 1  # "Open"
+_DEFAULT_STATUS_INDEX = 1
 
 _STATUS_LABELS = {"Draft": "مسودة", "Open": "مفتوحة", "On Hold": "معلّقة", "Closed": "مغلقة"}
 _STATUS_ICONS = {"Draft": "⚪", "Open": "🟢", "On Hold": "🟡", "Closed": "🔴"}
@@ -56,15 +52,8 @@ _NAV_KEY, _MATCHING_PAGE, _MATCHING_JOB_KEY = "nav_page", "🎯 المطابقة
 _AI_DRAFT_KEYS = {"title", "dept", "loc", "desc", "exp"} | {attr for _, attr in _LIST_FIELDS}
 
 
-# ------------------------------------------------------------ أدوات عامة
 
 def _invalidate_job_related_caches() -> None:
-    """
-    قوائم الوظائف مخزّنة مؤقتاً في أكثر من صفحة (المطابقة، المقابلات، الهيكل التنظيمي)، ونتيجة
-    "الوظائف المناسبة" مخزّنة في بطاقة المرشح. يجب مسحها كلها عند أي تغيير في الوظائف
-    حتى لا تظهر بيانات قديمة بعد الحفظ مباشرة.
-    (مسجّلة في ui.helpers._CACHE_CLEARERS فلا تستدعِ invalidate_all من هنا.)
-    """
     _page_data.clear()
     _cached_insight.clear()
     _export_bytes.clear()
@@ -107,10 +96,8 @@ def _status_label(status: str) -> str:
     return _STATUS_LABELS.get(status, status)
 
 
-# ------------------------------------------------------------ تحميل البيانات (مخزّنة مؤقتاً)
 
 def _job_to_row(job: Job) -> dict:
-    """نسخة بسيطة من الوظيفة (dict) قابلة للتخزين في كاش Streamlit."""
     return {
         "id": job.id, "title": job.title, "department": job.department, "location": job.location,
         "department_id": job.department_id, "position_id": job.position_id,
@@ -138,7 +125,6 @@ def _page_data() -> dict:
 
 @st.cache_data(ttl=_CACHE_TTL, show_spinner=False)
 def _org_options() -> dict:
-    """أقسام ومسميات الهيكل التنظيمي لقوائم الاختيار في نموذج الوظيفة."""
     with get_db_session() as session:
         overview = OrganizationService(session).overview()
     return {"departments": overview["departments"], "positions": overview["positions"]}
@@ -158,14 +144,12 @@ def _export_bytes(job_ids: tuple[int, ...]) -> tuple[bytes, bytes]:
     return ExportService.to_csv_bytes(df), ExportService.to_excel_bytes(df, "Jobs")
 
 
-# ------------------------------------------------------------ نموذج الوظيفة (إضافة / تعديل)
 
 def _select_index(options: list[str], value: str | None) -> str:
     return value if value in options else ""
 
 
 def _department_id_for(name: str | None, departments: list[dict]) -> int | None:
-    """معرّف القسم الذي يطابق اسمه النص المعطى (بدون حساسية لحالة الأحرف)، أو None."""
     needle = (name or "").strip().lower()
     if not needle:
         return None
@@ -173,11 +157,6 @@ def _department_id_for(name: str | None, departments: list[dict]) -> int | None:
 
 
 def _form_values_from(job: Job | None, draft: dict | None = None) -> dict:
-    """
-    القيم المبدئية لحقول النموذج، مفتاحها لاحقة اسم الحقل (title, dept, exp...).
-    أولوية القيمة: نتيجة الذكاء الاصطناعي (إن وُجدت وغير فارغة) ثم بيانات الوظيفة الحالية ثم الفراغ.
-    "dept" و"pos" يحملان معرّف القسم والمسمى في الهيكل التنظيمي.
-    """
     draft = draft or {}
     departments = _org_options()["departments"]
 
@@ -211,7 +190,6 @@ def _form_values_from(job: Job | None, draft: dict | None = None) -> dict:
 
 
 def _apply_values_to_state(key: str, values: dict, only_non_empty: bool = False) -> None:
-    """يكتب القيم في session_state بمفاتيح الحقول. only_non_empty=True لا يمسح الحقول المعبّأة بقيم فارغة."""
     for suffix, value in values.items():
         if only_non_empty and value in ("", 0.0, None):
             continue
@@ -219,10 +197,6 @@ def _apply_values_to_state(key: str, values: dict, only_non_empty: bool = False)
 
 
 def _seed_form_state(key: str, job: Job | None) -> None:
-    """
-    يهيّئ حقول النموذج من بيانات الوظيفة عند غياب مفتاح الحقل فقط، ثم يطبّق مسودة الذكاء
-    الاصطناعي المعلّقة (إن وُجدت) قبل رسم الحقول مباشرة (الوقت الوحيد الآمن لتعديل قيمها).
-    """
     for suffix, value in _form_values_from(job).items():
         st.session_state.setdefault(f"{key}_{suffix}", value)
 
@@ -232,7 +206,6 @@ def _seed_form_state(key: str, job: Job | None) -> None:
 
 
 def _render_ai_job_generator(key: str) -> None:
-    """توليد بيانات الوظيفة من وصف حر. يعمل داخل dialog، فنعيد تشغيل الـ fragment فقط ليبقى مفتوحاً."""
     with st.expander("🤖 توليد بيانات الوظيفة تلقائياً من وصف حر"):
         raw_description = st.text_area(
             "الصق وصف الوظيفة هنا (نص غير منظم)",
@@ -261,7 +234,6 @@ def _render_ai_job_generator(key: str) -> None:
 
 
 def _job_form_fields(key: str) -> dict:
-    """يرسم حقول نموذج الوظيفة ويرجع القيم المُدخلة (القيم المبدئية من session_state عبر _seed_form_state)."""
     org = _org_options()
     dept_names = {d["id"]: d["name"] for d in org["departments"]}
     position_labels = {
@@ -354,9 +326,8 @@ def _create_dialog() -> None:
         except AIServiceError as exc:
             st.error(str(exc))
 
-    _render_ai_job_generator("new")  # للصق وصف كامل بدل المسمى فقط
+    _render_ai_job_generator("new")
 
-    # إن كتب المستخدم المسمى ولم يطلب اقتراحاً، ننقله لحقل النموذج
     if title_seed.strip() and not st.session_state.get("new_title"):
         st.session_state["new_title"] = title_seed.strip()
 
@@ -427,24 +398,20 @@ def _edit_dialog(job_id: int) -> None:
     st.subheader(job.title)
     _render_job_details_tab(job_id, job)
 
-# ------------------------------------------------------------ إجراءات سريعة
 
 def _select_job(job_id: int) -> None:
     st.session_state[_SELECTED_KEY] = job_id
 
 
 def _go_to_matching(job_id: int, title: str) -> None:
-    """callback: ينقل المستخدم لصفحة المطابقة مع اختيار هذه الوظيفة."""
     st.session_state[_NAV_KEY] = _MATCHING_PAGE
     st.session_state[_MATCHING_JOB_KEY] = f"{title} (#{job_id})"
 
 
 def _quick_action(action, success: str) -> None:
-    """action تستقبل JobService (نسخ، إغلاق...)؛ التنفيذ والكاش وإعادة التشغيل عبر run_action."""
     run_action(lambda session: action(JobService(session)), success)
 
 
-# ------------------------------------------------------------ المؤشرات والفلاتر
 
 def _render_kpis(k: dict) -> None:
     month = lambda n: (f"▲ +{n} وظيفة أُنشئت هذا الشهر", "up") if n else ("لا وظائف جديدة هذا الشهر", "muted")  # noqa: E731
@@ -505,7 +472,6 @@ def _apply_filters(rows: list[dict], query: str, f: dict) -> list[dict]:
     return result
 
 
-# ------------------------------------------------------------ الجدول والبطاقات
 
 def _render_table(rows: list[dict], stats: dict[int, JobStats]) -> None:
     data = []
@@ -557,12 +523,10 @@ def _render_cards(rows: list[dict], stats: dict[int, JobStats]) -> None:
 
 
 def _resolve_selected(rows: list[dict]) -> dict:
-    """الوظيفة المختارة إن كانت ضمن النتائج الحالية، وإلا أول وظيفة."""
     by_id = {r["id"]: r for r in rows}
     return by_id.get(st.session_state.get(_SELECTED_KEY)) or rows[0]
 
 
-# ------------------------------------------------------------ تحليل التوظيف والقمع (أسفل الجدول)
 
 def _render_insight_section(job: dict) -> None:
     insight = _cached_insight(job["id"])
@@ -607,7 +571,6 @@ def _render_insight_section(job: dict) -> None:
             st.write(f"• {note}")
 
 
-# ------------------------------------------------------------ لوحة تفاصيل الوظيفة (يمين)
 
 def _render_detail_panel(job: dict, stats: dict[int, JobStats]) -> None:
     s = stats.get(job["id"], JobStats())
@@ -651,7 +614,6 @@ def _render_detail_panel(job: dict, stats: dict[int, JobStats]) -> None:
         st.markdown(ui.funnel_html(s.funnel(), size=38), unsafe_allow_html=True)
 
 
-# ------------------------------------------------------------ الصفحة الرئيسية
 
 def render() -> None:
     ui.inject_css()

@@ -1,5 +1,3 @@
-"""صفحة العروض والتعيين بتصميم لوحة احترافية: مؤشرات + مسار التوظيف، فلاتر، جدول/بطاقات مع ترقيم صفحات،
-ثم نسبة القبول والنشاط الأخير والإجراءات السريعة. التعيين قرار بشري ويزيد current_headcount للمسمى المرتبط."""
 
 import html
 from datetime import date, datetime, timedelta, timezone
@@ -85,7 +83,6 @@ _CSS = """<style>
 </style>"""
 
 
-# ------------------------------------------------------------ أدوات عامة
 
 def _inject_css() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
@@ -104,7 +101,6 @@ def _now() -> datetime:
 
 
 def _naive(value: datetime) -> datetime:
-    """SQLite يعيد التاريخ بدون tzinfo أحياناً؛ نوحّد المقارنة على UTC بدون tzinfo."""
     return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
 
 
@@ -121,7 +117,6 @@ def _salary_text(salary: float | None) -> str:
 
 
 def _badge(status: str) -> str:
-    """شارة حالة العرض (التسمية واللون من قواميس هذه الصفحة)."""
     return components.badge(_STATUS_LABELS.get(status, status), _STATUS_COLORS.get(status))
 
 
@@ -141,7 +136,6 @@ def _go_to_reports() -> None:
     st.session_state[_NAV_KEY] = _REPORTS_PAGE
 
 def _prefill_choice(eligible: list[dict]) -> int:
-    """التقديم المحدَّد مسبقاً في نافذة العرض: بالتقديم أولاً ثم بالمرشح، وإلا أول تقديم مؤهل."""
     app_id = st.session_state.pop(OFFER_PREFILL_APP, None)
     candidate_id = st.session_state.pop(OFFER_PREFILL_CANDIDATE, None)
     for e in eligible:
@@ -152,7 +146,6 @@ def _prefill_choice(eligible: list[dict]) -> int:
             return e["application_id"]
     return eligible[0]["application_id"]
 
-# ------------------------------------------------------------ نوافذ إنشاء/تعديل عرض
 
 @st.dialog("➕ عرض جديد", width="large")
 def _create_dialog() -> None:
@@ -204,7 +197,6 @@ def _edit_dialog(o: dict) -> None:
         run_action(lambda s: OfferService(s).update_offer(oid, salary or None, start, notes, expires), "تم الحفظ ✅")
 
 
-# ------------------------------------------------------------ المؤشرات ومسار التوظيف
 
 def _trend_text(offers: list[dict]) -> str:
     now = _now()
@@ -261,7 +253,6 @@ def _render_summary(offers: list[dict], interview_count: int) -> None:
         col.markdown(card, unsafe_allow_html=True)
 
 
-# ------------------------------------------------------------ الفلاتر
 
 def _render_filters(offers: list[dict]) -> dict:
     jobs = sorted({o["job"] for o in offers if o["job"]})
@@ -313,7 +304,6 @@ def _apply_filters(offers: list[dict], f: dict) -> list[dict]:
     return result
 
 
-# ------------------------------------------------------------ إجراءات العرض (قائمة ⋯)
 
 def _render_actions(o: dict) -> None:
     oid = o["id"]
@@ -339,7 +329,6 @@ def _render_actions(o: dict) -> None:
             run_action(lambda s: OfferService(s).delete_offer(oid), "تم الحذف 🗑️")
 
 
-# ------------------------------------------------------------ الجدول والبطاقات
 
 def _render_table_header() -> None:
     for col, label in zip(st.columns(_TABLE_WEIGHTS), _TABLE_HEADERS):
@@ -413,7 +402,6 @@ def _render_list(rows: list[dict], view: str) -> None:
     _render_pagination(len(rows), pages, page, start, len(page_rows))
 
 
-# ------------------------------------------------------------ اللوحات السفلية
 
 def _acceptance_card(offers: list[dict]) -> None:
     total = len(offers)
@@ -494,12 +482,11 @@ def _quick_actions_card(filtered: list[dict]) -> None:
         st.caption("التصدير يشمل نتائج الفلاتر الحالية.")
 
 
-# ------------------------------------------------------------ تبويب العروض
 
 def _render_offers_tab(offers: list[dict]) -> None:
     f = _render_filters(offers)
     signature = tuple(f.values())
-    if st.session_state.get(_SIGNATURE_KEY) != signature:  # تغيّر فلتر: نرجع للصفحة الأولى
+    if st.session_state.get(_SIGNATURE_KEY) != signature:
         st.session_state[_SIGNATURE_KEY] = signature
         st.session_state[_PAGE_KEY] = 1
 
@@ -516,7 +503,6 @@ def _render_offers_tab(offers: list[dict]) -> None:
         _quick_actions_card(filtered)
 
 
-# ------------------------------------------------------------ تبويب التعيين
 
 def _render_time_to_hire() -> None:
     with get_db_session() as session:
@@ -553,7 +539,6 @@ def _render_hiring_tab(offers: list[dict]) -> None:
     st.caption("لتصحيح تعيين خاطئ: انقل التقديم من لوحة «المطابقة» إلى مرحلة أخرى وسينقص العدد الحالي تلقائياً.")
 
 
-# ------------------------------------------------------------ تبويب السجل
 
 def _render_history_tab() -> None:
     with get_db_session() as session:
@@ -571,11 +556,10 @@ def _render_history_tab() -> None:
     )
 
 
-# ------------------------------------------------------------ الصفحة
 def render() -> None:
     _inject_css()
     if st.session_state.pop("open_create_offer", False):
-        st.session_state.pop(_OFFER_APP_KEY, None)  # الاختيار يأتي من التحديد المسبق لا من فتح سابق
+        st.session_state.pop(_OFFER_APP_KEY, None)
         _create_dialog()
     col_title, col_new = st.columns([5, 1])
     with col_title:

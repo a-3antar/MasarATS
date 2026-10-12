@@ -1,7 +1,3 @@
-"""صفحة المطابقة بتصميم احترافي: لوحتان متجاورتان
-(1) وظيفة ← مرشحون: ملخص المراحل + لوحة Kanban ببطاقات مرشحين.
-(2) مرشح ← وظائف: بطاقات وظائف مرتبة حسب المطابقة.
-المنطق (الكاش، session_state، نقل التقديم) كما هو؛ التغيير في العرض فقط."""
 
 import base64
 import html
@@ -70,7 +66,6 @@ _CSS = f"""
 """
 
 
-# ------------------------------------------------------------ كاش القوائم
 
 @st.cache_data(ttl=_LIST_CACHE_TTL, show_spinner=False)
 def _cached_jobs() -> list:
@@ -89,11 +84,9 @@ def _invalidate_list_caches() -> None:
     _cached_candidates.clear()
 
 
-# ------------------------------------------------------------ مكوّنات HTML صغيرة
 
 @st.cache_data(show_spinner=False, max_entries=512)
 def _photo_data_uri(path: str, mtime: float) -> str | None:
-    """الصورة كـ data URI لعرضها دائرية داخل HTML (mtime في المفتاح لتحديث الكاش عند تغيّر الصورة)."""
     try:
         data = Path(path).read_bytes()
     except OSError:
@@ -123,14 +116,12 @@ def _stage_color(status: str) -> str:
 
 
 def _scroll_container(key: str):
-    """حاوية بمفتاح (للتمرير الأفقي عبر CSS). على إصدارات Streamlit القديمة تعمل كحاوية عادية."""
     try:
         return st.container(key=key)
     except TypeError:
         return st.container()
 
 
-# ------------------------------------------------------------ تفاصيل الدرجة
 
 def _render_match_details(r: dict) -> None:
     with st.expander("تفاصيل الدرجة"):
@@ -155,7 +146,6 @@ def _render_match_details(r: dict) -> None:
             st.caption("لا توجد فجوات.")
 
 
-# ------------------------------------------------------------ نقل التقديم (Kanban)
 
 def _change_application_status(application_id: int, new_status: str) -> None:
     try:
@@ -231,7 +221,6 @@ def _render_kanban_board(results: list[dict]) -> None:
                     _render_kanban_card(r, status)
 
 
-# ------------------------------------------------------------ اللوحة 1: وظيفة ← مرشحون
 
 def _render_job_to_candidates() -> None:
     jobs = _cached_jobs()
@@ -274,7 +263,6 @@ def _render_job_to_candidates() -> None:
     _render_kanban_board(filtered)
 
 
-# ------------------------------------------------------------ اللوحة 2: مرشح ← وظائف
 
 def _render_job_result(r: dict) -> None:
     job = r["job"]
@@ -327,7 +315,6 @@ def _render_candidate_to_jobs() -> None:
         _render_job_result(r)
 
 
-# ------------------------------------------------------------ الصفحة
 
 def render() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)

@@ -1,4 +1,3 @@
-"""مستودع المستخدمين: استعلامات خاصة بجدول users لا يوفرها المستودع العام."""
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -8,7 +7,6 @@ from repositories.base import BaseRepository
 
 
 class UserRepository(BaseRepository[User]):
-    """عمليات قاعدة البيانات الخاصة بالمستخدمين."""
 
     def __init__(self, session: Session) -> None:
         super().__init__(session, User)

@@ -1,5 +1,3 @@
-"""مولّدات HTML صغيرة لصفحة الوظائف (بطاقات المؤشرات، القمع...). لا تصل للقاعدة.
-الشارات والشرائح موحّدة في ui/components.py."""
 
 import html
 from datetime import datetime, timezone
@@ -47,7 +45,6 @@ def inject_css() -> None:
 
 
 def relative_time(value: datetime | None) -> str:
-    """وقت نسبي بالعربية (منذ ساعتين...)."""
     if value is None:
         return "-"
     if value.tzinfo is None:

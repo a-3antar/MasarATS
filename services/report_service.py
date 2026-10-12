@@ -1,4 +1,3 @@
-"""خدمة التقارير: تجميع أرقام لوحة المعلومات والتقارير. ترجع بيانات بسيطة (dict/list) قابلة للتخزين في كاش Streamlit."""
 
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -27,12 +26,10 @@ from models.application_stage_history import ApplicationStageHistory
 UNSPECIFIED_DEPARTMENT = "غير محدد"
 UNANALYZED_LEVEL = "غير محلَّل"
 _REJECTED = "Rejected"
-# مراحل القمع بالترتيب (بدون Rejected)
 _FUNNEL_STAGES = [s for s in APPLICATION_STATUSES if s != _REJECTED]
 
 
 def department_of(job: Job) -> str:
-    """القسم الذي تنتمي له الوظيفة. نقطة التحويل الوحيدة عند ربط الأقسام بجدول departments (المرحلة 4)."""
     return (job.department or "").strip() or UNSPECIFIED_DEPARTMENT
 
 
@@ -46,10 +43,8 @@ class ReportService:
     def _candidates_with_status(self, status: str) -> int:
         return self._count(select(func.count()).select_from(Candidate).where(Candidate.status == status))
 
-    # ------------------------------------------------------------ المؤشرات
 
     def kpis(self) -> dict[str, int]:
-        # SQLite يخزّن UTC بدون tzinfo، فنقارن بتاريخ UTC بدون tzinfo
         since = (datetime.now(timezone.utc) - timedelta(days=NEW_CV_DAYS)).replace(tzinfo=None)
         return {
             "total_candidates": self._count(select(func.count()).select_from(Candidate)),
@@ -63,7 +58,6 @@ class ReportService:
             "hired": self._candidates_with_status("Hired"),
         }
 
-    # ------------------------------------------------------------ التقديمات والقمع
 
     def applications_by_status(self) -> dict[str, int]:
         rows = self._session.execute(
@@ -75,14 +69,12 @@ class ReportService:
         return counts
 
     def funnel(self) -> list[tuple[str, int]]:
-        """قمع تراكمي: كل مرحلة = التقديمات التي وصلت لها أو تجاوزتها (المرفوضون لا يُحسبون)."""
         counts = self.applications_by_status()
         result = []
         for index, stage in enumerate(_FUNNEL_STAGES):
             result.append((stage, sum(counts[s] for s in _FUNNEL_STAGES[index:])))
         return result
 
-    # ------------------------------------------------------------ المرشحون
 
     def candidates_by_career_level(self) -> dict[str, int]:
         levels = Counter()
@@ -92,7 +84,6 @@ class ReportService:
         return dict(levels.most_common())
 
     def candidates_by_department(self) -> dict[str, int]:
-        """عدد المرشحين المتقدمين لكل قسم (حسب قسم الوظيفة التي قُدِّم عليها)."""
         rows = self._session.execute(
             select(Job, func.count(func.distinct(Application.candidate_id)))
             .join(Application, Application.job_id == Job.id)
@@ -104,7 +95,6 @@ class ReportService:
         return dict(totals.most_common())
 
     def top_skills(self, limit: int = DASHBOARD_TOP_SKILLS) -> list[tuple[str, int]]:
-        """أكثر المهارات تكراراً بين المرشحين (مهارة مرة واحدة لكل مرشح، بعد توحيد الاسم)."""
         counts: Counter[str] = Counter()
         names: dict[str, Counter[str]] = {}
         stmt = select(
@@ -137,10 +127,8 @@ class ReportService:
             for name, position, title, score in rows
         ]
 
-    # ------------------------------------------------------------ الوظائف
 
     def jobs_needing_candidates(self, minimum: int = MIN_CANDIDATES_PER_JOB) -> list[dict]:
-        """وظائف مفتوحة عدد المرشحين المطابَقين لها أقل من الحد الأدنى."""
         rows = self._session.execute(
             select(Job, func.count(Application.id))
             .outerjoin(Application, Application.job_id == Job.id)
@@ -154,7 +142,6 @@ class ReportService:
         return sorted(result, key=lambda r: r["candidates"])
 
     def required_skills_availability(self, limit: int = 15) -> list[dict]:
-        """لكل مهارة مطلوبة في الوظائف المفتوحة: كم مرشحاً يملكها (الأقل توفراً أولاً)."""
         jobs = self._session.scalars(select(Job).where(Job.status == "Open")).all()
         demand: Counter[str] = Counter()
         display: dict[str, str] = {}
@@ -182,10 +169,8 @@ class ReportService:
         rows.sort(key=lambda r: (r["candidates_with_skill"], -r["jobs_requiring"]))
         return rows[:limit]
 
-    # ------------------------------------------------------------ تقرير وظيفة
 
     def recruitment_report(self, job_id: int) -> dict[str, int]:
-        """قمع وظيفة واحدة: السير، المؤهلون، القائمة المختصرة، المقابلات، العروض، التعيين."""
         applications = self._session.scalars(select(Application).where(Application.job_id == job_id)).all()
         index = {s: i for i, s in enumerate(APPLICATION_STATUSES)}
 
@@ -210,10 +195,6 @@ class ReportService:
         }
 
     def time_to_hire(self, job_id: int | None = None) -> dict:
-        """
-        وقت التعيين بالأيام = (آخر انتقال إلى Hired) − (تاريخ إنشاء التقديم)، للتقديمات الحالية الحالة Hired فقط.
-        لا تُعرض الأرقام إن قلّ العدد عن MIN_HIRES_FOR_TIME_STATS (مقياس غير مستقر).
-        """
         stmt = (
             select(Application.created_at, func.max(ApplicationStageHistory.changed_at))
             .join(ApplicationStageHistory, ApplicationStageHistory.application_id == Application.id)
@@ -223,7 +204,7 @@ class ReportService:
         if job_id is not None:
             stmt = stmt.where(Application.job_id == job_id)
 
-        def naive(value):  # SQLite يعيد التاريخ بدون tzinfo أحياناً
+        def naive(value):
             return value.replace(tzinfo=None) if value.tzinfo else value
 
         days = [

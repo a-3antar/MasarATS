@@ -1,20 +1,17 @@
-"""نظام التصميم المركزي: الألوان الدلالية، تسميات المراحل، وCSS عام يُحقن مرة واحدة من app.py.
-أي لون أو نمط جديد يُضاف هنا فقط (لا CSS ولا ألوان يدوية داخل الصفحات)."""
 
 import streamlit as st
 
 from core.constants import SCORE_GOOD, SCORE_MID
 
 COLORS: dict[str, str] = {
-    "primary": "#2563eb",   # الإجراء الرئيسي، الروابط، العنصر المحدد
-    "success": "#16a34a",   # مكتمل، مطابقة قوية، مقبول
-    "warning": "#d97706",   # يحتاج انتباه، متوسط
-    "danger": "#dc2626",    # رفض، فجوة، خطأ
-    "neutral": "#64748b",   # جديد، مسودة، غير مهم
-    "info": "#3b82f6",      # قيد التنفيذ
+    "primary": "#2563eb",
+    "success": "#16a34a",
+    "warning": "#d97706",
+    "danger": "#dc2626",
+    "neutral": "#64748b",
+    "info": "#3b82f6",
 }
 
-# مراحل التوظيف: لون واحد لكل مرحلة في كل الصفحات
 STAGE_COLORS: dict[str, str] = {
     "New": "#64748b", "Screening": "#3b82f6", "Shortlisted": "#d9a21b",
     "Interview": "#f59e0b", "Offer": "#d9487a", "Hired": "#16a34a", "Rejected": "#b91c1c",
@@ -26,7 +23,6 @@ STAGE_LABELS: dict[str, str] = {
 
 
 def score_color(value: float) -> str:
-    """أخضر ≥ SCORE_GOOD، برتقالي ≥ SCORE_MID، وإلا أحمر."""
     if value >= SCORE_GOOD:
         return COLORS["success"]
     return COLORS["warning"] if value >= SCORE_MID else COLORS["danger"]
@@ -184,5 +180,4 @@ h2 {{ padding-bottom: .35rem; border-bottom: 2px solid var(--ats-primary); displ
 """
 
 def inject_theme() -> None:
-    """يحقن CSS العام. يُستدعى مرة واحدة في كل دورة من app.py."""
     st.markdown(_CSS, unsafe_allow_html=True)

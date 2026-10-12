@@ -1,7 +1,3 @@
-"""حساب وتخزين التمثيل الدلالي (Embedding) لمرشح أو وظيفة، مع كاش يمنع إعادة الحساب
-إن لم يتغيّر النص، وحساب جماعي بالتوازي لتسريع المطابقة على عدة مرشحين/وظائف دفعة واحدة.
-ملاحظة: نداء Gemini (I/O) يُنفَّذ داخل Threads، أما تعديل كائنات SQLAlchemy (غير آمن عبر
-Threads متزامنة) فيتم دائماً في الخيط الرئيسي فقط."""
 
 import concurrent.futures
 import hashlib
@@ -38,14 +34,12 @@ def _job_text(job: Job) -> str:
 
 
 class EmbeddingService:
-    """يحسب Embedding عند الحاجة فقط ويخزّنه على الكائن نفسه (candidate.embedding / job.embedding)."""
 
     @staticmethod
     def _ai_available() -> bool:
         settings = get_settings()
         return bool(settings.gemini_api_key or settings.alt_gemini_api_key)
 
-    # ------------------------------------------------------------ مفرد
 
     def ensure_candidate_embedding(self, candidate: Candidate) -> list[float] | None:
         return self._ensure(candidate, _candidate_text(candidate))
@@ -78,7 +72,6 @@ class EmbeddingService:
         entity.embedding_meta = {"input_hash": input_hash, "model": EMBEDDING_MODEL_NAME}
         return vector
 
-    # ------------------------------------------------------------ جماعي بالتوازي
 
     def ensure_many_candidate_embeddings(self, candidates: list[Candidate]) -> None:
         self._ensure_many(candidates, _candidate_text)
@@ -87,8 +80,6 @@ class EmbeddingService:
         self._ensure_many(jobs, _job_text)
 
     def _ensure_many(self, entities: list, text_fn) -> None:
-        """يحسب النصوص والهاشات في الخيط الرئيسي، ثم يستدعي Gemini بالتوازي (Threads)،
-        ثم يخزّن النتائج في الخيط الرئيسي فقط بعد اكتمال كل نداء - آمن مع SQLAlchemy Session."""
         if not self._ai_available() or not entities:
             return
 

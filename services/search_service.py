@@ -1,4 +1,3 @@
-"""البحث الذكي: الذكاء الاصطناعي يحوّل الطلب إلى فلاتر فقط، والتنفيذ والترتيب بكود ثابت قابل للتفسير."""
 
 import re
 
@@ -16,7 +15,6 @@ def _norm(value: str | None) -> str:
 
 
 def _role_matches(role: str, title: str | None) -> bool:
-    """كل كلمات المسمى المطلوب موجودة في المسمى (Production Manager ⊂ Senior Production Manager)."""
     tokens = re.findall(r"\w+", _norm(role))
     title_text = _norm(title)
     return bool(tokens) and bool(title_text) and all(t in title_text for t in tokens)
@@ -28,13 +26,11 @@ class SearchService:
 
     @staticmethod
     def parse_query(query: str) -> CandidateSearchFilters:
-        """يحوّل النص الحر إلى فلاتر عبر Gemini. يرفع AIServiceError إن لم يتوفر الذكاء الاصطناعي."""
         from ai.gemini_service import GeminiService
 
         return GeminiService().parse_search_query(query)
 
     def search(self, filters: CandidateSearchFilters) -> list[dict]:
-        """يرجع [{candidate, relevance, reasons}] مرتبة حسب الصلة."""
         results = []
         for candidate in self._candidates.list_all(limit=SEARCH_MAX_CANDIDATES):
             evaluation = self._evaluate(candidate, filters)
@@ -48,7 +44,6 @@ class SearchService:
         reasons: list[str] = []
         years = candidate.total_experience_years
 
-        # فلاتر صارمة
         if f.experience_min is not None:
             if years is None or years < f.experience_min:
                 return None
@@ -60,7 +55,6 @@ class SearchService:
                 return None
             reasons.append(f"الموقع: {candidate.location}")
 
-        # معايير مرنة: نسبة تحقق كل معيار
         soft_total, soft_hits = 0, 0.0
 
         if f.role:

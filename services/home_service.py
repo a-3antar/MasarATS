@@ -1,5 +1,3 @@
-"""خدمة الصفحة الرئيسية: مسار التوظيف وقائمة «تحتاج انتباهك» من بيانات القاعدة الفعلية فقط.
-تعيد استخدام ReportService (المؤشرات) و OfferService (العروض) بدل تكرار منطقهما."""
 
 from dataclasses import dataclass
 
@@ -18,7 +16,6 @@ _NEW, _REJECTED, _HIRED, _OPEN_JOB = "New", "Rejected", "Hired", "Open"
 _IN_PROGRESS, _COMPLETED = "In Progress", "Completed"
 _OFFER_DRAFT, _OFFER_SENT, _OFFER_ACCEPTED, *_ = OFFER_STATUSES
 
-# (عنوان المرحلة، حالة المرشح) - «السير الذاتية» تُضاف في البداية كإجمالي المرشحين
 _PIPELINE_STAGES = (
     ("الفرز", "Screening"),
     ("القائمة المختصرة", "Shortlisted"),
@@ -30,7 +27,6 @@ _PIPELINE_STAGES = (
 
 @dataclass(frozen=True)
 class AttentionItem:
-    """عنصر يحتاج إجراءً من المستخدم، مع الصفحة التي تعالجه (target = مفتاح صفحة التنقل)."""
 
     icon: str
     message: str
@@ -47,11 +43,9 @@ class HomeService:
         return self._session.scalar(stmt) or 0
 
     def overview(self) -> dict:
-        """كل بيانات الصفحة الرئيسية كأنواع بسيطة قابلة للتخزين في كاش Streamlit."""
         kpis = ReportService(self._session).kpis()
         total_jobs = self._count(select(func.count()).select_from(Job))
         total_applications = self._count(select(func.count()).select_from(Application))
-        # تقدم الإعداد مشتق من البيانات نفسها (لا حالة محفوظة): تختفي القائمة عند اكتمال الخطوات
         setup = {
             "candidates": kpis["total_candidates"] > 0,
             "jobs": total_jobs > 0,
@@ -65,10 +59,8 @@ class HomeService:
             "is_new_workspace": not setup["candidates"] and not setup["jobs"],
         }
 
-    # ------------------------------------------------------------ مسار التوظيف
 
     def _pipeline(self, total_candidates: int) -> list[tuple[str, int]]:
-        """عدد المرشحين في كل مرحلة حالياً (حالة المرشح مشتقة من تقديماته)."""
         rows = dict(
             self._session.execute(select(Candidate.status, func.count()).group_by(Candidate.status)).all()
         )
@@ -76,7 +68,6 @@ class HomeService:
             (label, rows.get(status, 0)) for label, status in _PIPELINE_STAGES
         ]
 
-    # ------------------------------------------------------------ تحتاج انتباهك
 
     def _attention_items(self) -> list[AttentionItem | None]:
         return [
@@ -97,7 +88,6 @@ class HomeService:
         return AttentionItem("👥", f"{count} مرشح بانتظار المراجعة", count, "candidates", "مراجعة المرشحين")
 
     def _strong_without_interview(self) -> AttentionItem | None:
-        """تقديمات عالية المطابقة على وظائف مفتوحة ولم تُجدول لها أي مقابلة."""
         no_interview = ~exists().where(Interview.application_id == Application.id)
         open_jobs = select(Job.id).where(Job.status == _OPEN_JOB)
         count = self._count(
@@ -114,7 +104,6 @@ class HomeService:
         return AttentionItem("🎯", message, count, "matching", "عرض الأنسب")
 
     def _interviews_to_evaluate(self) -> AttentionItem | None:
-        """مقابلات جارية، أو منتهية بلا تقييم نهائي."""
         count = self._count(
             select(func.count()).select_from(Interview).where(
                 or_(

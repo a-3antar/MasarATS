@@ -1,4 +1,3 @@
-"""خدمة التقديمات: تغيير المرحلة (مع تسجيل التاريخ)، مزامنة حالة المرشح، وتحديث current_headcount عند التعيين."""
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -32,10 +31,6 @@ class ApplicationService:
     def change_status(
         self, application_id: int, new_status: str, changed_by: str | None = None, note: str | None = None
     ) -> Application:
-        """
-        يغيّر مرحلة تقديم واحد ويسجّل الانتقال في application_stage_history،
-        ثم يعدّل current_headcount للمسمى المرتبط (عند دخول/خروج Hired)، ثم يعيد حساب حالة المرشح.
-        """
         if new_status not in APPLICATION_STATUSES:
             raise ValidationError(f"مرحلة غير صالحة: {new_status}")
 
@@ -52,14 +47,13 @@ class ApplicationService:
             application_id=application_id, from_status=old_status, to_status=new_status,
             changed_by=changed_by, note=(note or "").strip() or None,
         ))
-        self._session.flush()  # الجلسة بدون autoflush؛ نحتاج التغيير مرئياً قبل إعادة الحساب
+        self._session.flush()
         self._adjust_headcount(application.job_id, old_status, new_status)
         self._sync_candidate_status(application.candidate_id)
         logger.info("Application %s moved %s -> %s by %s", application_id, old_status, new_status, changed_by)
         return application
 
     def _adjust_headcount(self, job_id: int, old_status: str, new_status: str) -> None:
-        """+1 عند الانتقال إلى Hired، و-1 عند الخروج منها (تصحيح خطأ)، على مسمى الوظيفة في الهيكل."""
         delta = int(new_status == _HIRED) - int(old_status == _HIRED)
         if not delta:
             return
@@ -91,7 +85,6 @@ class ApplicationService:
         return _NEW
 
     def recent_history(self, limit: int = _DEFAULT_HISTORY_LIMIT) -> list[dict]:
-        """آخر انتقالات المراحل عبر كل التقديمات، الأحدث أولاً."""
         stmt = (
             select(ApplicationStageHistory, Candidate.full_name, Job.title)
             .join(Application, Application.id == ApplicationStageHistory.application_id)

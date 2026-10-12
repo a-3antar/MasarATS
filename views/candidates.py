@@ -1,5 +1,3 @@
-"""صفحة المرشحين بتخطيط Master-Detail: جدول مركّز + شريط فلاتر ذكي + لوحة جانبية لبطاقة المرشح.
-الأداء: تحميل واحد مخزّن مؤقتاً لكل المرشحين، فلترة وترتيب في الذاكرة، وترقيم صفحات (الصور تُحمَّل لصفحة واحدة فقط)."""
 
 import base64
 import hashlib
@@ -23,10 +21,10 @@ from ui import components
 from views import candidate_profile
 from ui.guards import can_edit
 
-_LIST_TTL = 30                  # ثوانٍ - كاش قائمة المرشحين
-_THUMB_PX = 48                  # حجم الصورة الرمزية في الجدول
-_EXP_MAX = 30                   # أقصى قيمة في شريط الخبرة (30 = "30 فأكثر")
-_TOP_SKILLS_OPTIONS = 60        # عدد المهارات المعروضة في فلتر المهارات
+_LIST_TTL = 30
+_THUMB_PX = 48
+_EXP_MAX = 30
+_TOP_SKILLS_OPTIONS = 60
 _TOP_LOCATIONS_OPTIONS = 60
 _TABLE_HEIGHT = 620
 _DRAWER_HEIGHT = 780
@@ -43,18 +41,16 @@ _SORT_OPTIONS = ["الأحدث", "الأعلى مطابقة", "الأكثر خب
 _SEARCH_MODE_LABELS = {False: "🔍 بحث عادي", True: "🤖 بحث ذكي"}
 
 _TABLE_VER_KEY = "cand_table_ver"
-_SMART_KEY = "candidates_smart_toggle"   # يضبطه home.py عبر go_to - لا تغيّر الاسم
+_SMART_KEY = "candidates_smart_toggle"
 _FILTER_DEFAULTS = {
     "cand_f_status": [], "cand_f_level": [], "cand_f_exp": (0, _EXP_MAX),
     "cand_f_loc": [], "cand_f_skills": [], "cand_sort": _SORT_OPTIONS[0], "candidates_query": "",
 }
 
 
-# ------------------------------------------------------------ تحميل البيانات (مخزّن مؤقتاً)
 
 @st.cache_data(ttl=_LIST_TTL, show_spinner=False)
 def _load_data() -> dict:
-    """كل المرشحين + ملخص المطابقة + خيارات الفلاتر - استعلام واحد لكل مدة الكاش."""
     with get_db_session() as session:
         service = CandidateService(session)
         candidates = service.list_all(limit=SEARCH_MAX_CANDIDATES)
@@ -84,7 +80,6 @@ def _load_data() -> dict:
 
 @st.cache_data(show_spinner=False, max_entries=2000)
 def _thumb_uri(path: str) -> str | None:
-    """صورة رمزية مصغّرة كـ data URI لعرضها داخل الجدول."""
     try:
         from PIL import Image
 
@@ -100,7 +95,6 @@ def _thumb_uri(path: str) -> str | None:
 
 @st.cache_data(show_spinner="🤖 جاري فهم طلب البحث...", ttl=_SMART_CACHE_TTL)
 def _smart_search(query: str) -> dict:
-    """بحث بلغة طبيعية: {filters, results: [(candidate_id, reason)]}. مخزّن حتى لا يُستدعى Gemini عند كل rerun."""
     filters = SearchService.parse_query(query)
     with get_db_session() as session:
         found = SearchService(session).search(filters)
@@ -122,7 +116,6 @@ def _export(kind: str, ids: tuple[int, ...]) -> bytes:
 
 
 def invalidate_cache() -> None:
-    """مسح كاش القائمة بعد إضافة/تعديل مرشح."""
     _load_data.clear()
     _export.clear()
     try:
@@ -132,10 +125,8 @@ def invalidate_cache() -> None:
         pass
 
 
-# ------------------------------------------------------------ الفلترة والترتيب (في الذاكرة)
 
 def _describe_filters(f: CandidateSearchFilters) -> str:
-    """وصف نصي للفلاتر المستخرجة (تستخدمه صفحة الرئيسية أيضاً)."""
     parts = []
     if f.role:
         parts.append(f"المسمى: {f.role}")
@@ -153,7 +144,6 @@ def _describe_filters(f: CandidateSearchFilters) -> str:
 
 
 def _filters_chips_html(f: CandidateSearchFilters) -> str:
-    """الفلاتر المفهومة من الطلب كشارات مختصرة (المسمى / الخبرة / المجال / المهارات / الموقع)."""
     items: list[str] = []
     if f.role:
         items.append(f"المسمى: {f.role}")
@@ -215,7 +205,6 @@ def _sort(items: list[Candidate], summary: dict, mode: str) -> list[Candidate]:
     return sorted(items, key=lambda c: c.id, reverse=True)
 
 
-# ------------------------------------------------------------ مكوّنات الواجهة
 
 def _reset_filters() -> None:
     for key, value in _FILTER_DEFAULTS.items():
@@ -223,7 +212,7 @@ def _reset_filters() -> None:
 
 
 def _close_drawer() -> None:
-    st.session_state[_TABLE_VER_KEY] = st.session_state.get(_TABLE_VER_KEY, 0) + 1  # مفتاح جديد = تصفير التحديد
+    st.session_state[_TABLE_VER_KEY] = st.session_state.get(_TABLE_VER_KEY, 0) + 1
 
 
 def _render_manual_form() -> None:
@@ -257,7 +246,6 @@ def _render_manual_form() -> None:
 
 
 def _render_toolbar(data: dict) -> tuple[str, bool]:
-    """الصف الأول: وضع البحث + مربع البحث + إضافة. الصف الثاني: الفلاتر. يرجع (نص البحث، هل البحث الذكي مفعّل)."""
     with st.container(border=True):
         col_mode, col_search, col_add = st.columns([2.4, 5, 1.3], vertical_alignment="bottom")
         smart = col_mode.radio(
@@ -304,7 +292,6 @@ def _render_export(ids: list[int]) -> None:
 
 
 def _selected_id(table_key: str, page_ids: list[int]) -> int | None:
-    """المرشح المحدد في الجدول من الدورة السابقة (نحتاجه قبل رسم الجدول لتحديد التخطيط)."""
     try:
         rows = st.session_state[table_key]["selection"]["rows"]
     except (KeyError, TypeError):
@@ -313,13 +300,11 @@ def _selected_id(table_key: str, page_ids: list[int]) -> int | None:
 
 
 def _next_action_label(status: str) -> str:
-    """نص الإجراء التالي المقترح لمرحلة المرشح (نفس مصدر بطاقة المرشح)."""
     step = candidate_profile._NEXT_ACTIONS.get(status)
     return step[0] if step else _NO_NEXT_ACTION
 
 
 def _build_rows(page_items: list[Candidate], data: dict, reasons: dict[int, str]) -> list[dict]:
-    """صفوف الجدول بترتيب القرار: من هو؟ ما خبرته؟ أين هو في المسار؟ ماذا أفعل بعد ذلك؟"""
     rows = []
     for c in page_items:
         photo = data["photos"].get(c.id)
@@ -351,7 +336,6 @@ _COLUMN_CONFIG = {
 
 
 def _render_empty_database() -> None:
-    """لا يوجد أي مرشح في النظام: نقترح الخطوة التالية بدل رسالة «لا توجد بيانات»."""
     components.empty_state(
         "👥", "لا يوجد مرشحون بعد", "ابدأ ببناء قاعدة المرشحين: ارفع سيراً ذاتية وسيستخرج النظام بياناتها تلقائياً.",
         [("📄 رفع سيرة ذاتية", "upload_cv", None)], key="cand_empty_db",
@@ -373,7 +357,6 @@ def render() -> None:
 
     query, smart = _render_toolbar(data)
 
-    # ---- البحث
     reasons: dict[int, str] = {}
     pool = candidates
     if smart and query:
@@ -390,14 +373,12 @@ def render() -> None:
     elif query:
         pool = [c for c in candidates if _text_match(c, query)]
 
-    # ---- الفلاتر والترتيب
     f = {k: st.session_state.get(f"cand_f_{k}", _FILTER_DEFAULTS[f"cand_f_{k}"])
          for k in ("status", "level", "exp", "loc", "skills")}
     filtered = [c for c in pool if _passes_filters(c, f)]
-    if not (smart and query and reasons):  # نتائج البحث الذكي تبقى مرتبة حسب الصلة
+    if not (smart and query and reasons):
         filtered = _sort(filtered, summary, st.session_state.get("cand_sort", _SORT_OPTIONS[0]))
 
-    # ---- شريط الأدوات فوق الجدول
     info_col, clear_col, export_col = st.columns([5, 1.2, 1.2])
     info_col.caption(f"النتائج: **{len(filtered)}** من {len(candidates)} مرشح")
     clear_col.button("🧹 مسح الفلاتر", on_click=_reset_filters, width="stretch")
@@ -408,7 +389,6 @@ def render() -> None:
         st.info("لا توجد نتائج مطابقة. جرّب وصفاً أبسط أو اضغط «🧹 مسح الفلاتر».")
         return
 
-    # ---- ترقيم الصفحات (القيم تُقرأ من session_state قبل رسم أدواتها أسفل الجدول)
     page_size = st.session_state.get("cand_page_size", _DEFAULT_PAGE_SIZE)
     pages = max(1, -(-len(filtered) // page_size))
     page = min(max(st.session_state.get("cand_page", 1), 1), pages)
@@ -421,7 +401,6 @@ def render() -> None:
     table_key = f"cand_tbl_{st.session_state.get(_TABLE_VER_KEY, 0)}_{signature}"
     selected_id = _selected_id(table_key, page_ids)
 
-    # ---- Master-Detail: الجدول + اللوحة الجانبية
     if selected_id is not None:
         table_area, drawer_area = st.columns([5, 4], gap="medium")
     else:

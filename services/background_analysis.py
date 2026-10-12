@@ -1,4 +1,3 @@
-"""مهام الخلفية: تحليل المرشح (مع retry وحالة ظاهرة) واكتشاف الوجه."""
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -35,7 +34,6 @@ def _set_status(candidate_id: int, status: str, error: str | None = None) -> Non
 
 
 def submit(candidate_id: int) -> None:
-    """يجدول التحليل بعد commit المرشح، ويكتب الحالة pending في القاعدة."""
     if not _ai_available():
         return
     with _lock:
@@ -52,7 +50,6 @@ def submit(candidate_id: int) -> None:
 
 
 def submit_photo(candidate_id: int, page_png: bytes | None) -> None:
-    """اكتشاف الوجه وقصّه في الخلفية. تظهر الصورة بعد ثوانٍ عند تحديث البطاقة."""
     if page_png:
         _photo_executor.submit(_run_photo, candidate_id, page_png)
 
@@ -67,7 +64,7 @@ def _run(candidate_id: int) -> None:
 
     try:
         with get_db_session() as session:
-            CandidateService(session).generate_ai_analysis(candidate_id, retry=True)  # يضع done داخل نفس الـ commit
+            CandidateService(session).generate_ai_analysis(candidate_id, retry=True)
         logger.info("Background AI analysis finished for candidate %s", candidate_id)
     except SmartATSError as exc:
         logger.warning("Background AI analysis failed for candidate %s: %s", candidate_id, exc)
@@ -98,7 +95,7 @@ def _run_photo(candidate_id: int, page_png: bytes) -> None:
         with get_db_session() as session:
             service = CandidateService(session)
             candidate = service.get_by_id(candidate_id)
-            if candidate is not None and not candidate.photo_path:  # لا نستبدل صورة رُفعت يدوياً
+            if candidate is not None and not candidate.photo_path:
                 service.set_photo(candidate_id, cropped[0])
     except Exception:  # noqa: BLE001
         logger.exception("Background face crop failed for candidate %s", candidate_id)

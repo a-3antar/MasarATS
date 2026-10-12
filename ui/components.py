@@ -1,4 +1,3 @@
-"""مكوّنات واجهة صغيرة قابلة لإعادة الاستخدام في كل الصفحات. لا تصل للقاعدة ولا CSS هنا (CSS في theme.py)."""
 
 import html
 from collections.abc import Iterable
@@ -17,7 +16,6 @@ def _pct(value) -> float:
 
 
 def badge(text: str, color: str | None = None) -> str:
-    """شارة حالة ملوّنة (HTML)."""
     return f'<span class="ui-badge" style="--c:{color or COLORS["neutral"]}">{html.escape(text)}</span>'
 
 
@@ -26,12 +24,10 @@ def chip(text: str) -> str:
 
 
 def chips(items: Iterable[str] | None, empty: str = "") -> str:
-    """مجموعة شرائح؛ تُرجع empty (HTML جاهز) إن كانت القائمة فارغة."""
     return "".join(chip(i) for i in items or []) or empty
 
 
 def score_bar(value: float | None) -> str:
-    """شريط درجة مع النسبة بجانبه."""
     pct = _pct(value)
     color = score_color(pct)
     return (
@@ -42,7 +38,6 @@ def score_bar(value: float | None) -> str:
 
 
 def labeled_bar(label: str, value: float | None) -> str:
-    """شريط بعنوان ونسبة فوقه (تفصيل معيار واحد)."""
     pct = _pct(value)
     return (
         f'<div class="ui-bar-row"><div class="ui-bar-head"><span>{html.escape(label)}</span>'
@@ -52,7 +47,6 @@ def labeled_bar(label: str, value: float | None) -> str:
 
 
 def score_ring(value: float | None, label: str, size: int = 64) -> str:
-    """حلقة درجة دائرية."""
     pct = _pct(value)
     return (
         f'<div class="ui-ring-wrap"><div class="ui-ring-box" style="width:{size}px;height:{size}px">'
@@ -68,7 +62,6 @@ def initials(name: str | None) -> str:
 
 
 def avatar(name: str | None, photo_uri: str | None = None, size: int = _DEFAULT_AVATAR_PX) -> str:
-    """صورة رمزية دائرية: الصورة إن وُجدت (data URI) وإلا الأحرف الأولى."""
     inner = f'<img src="{photo_uri}" alt="">' if photo_uri else html.escape(initials(name))
     return f'<div class="ui-avatar" style="--s:{size}px">{inner}</div>'
 
@@ -80,11 +73,6 @@ def empty_state(
     actions: list[tuple[str, str, dict | None]],
     key: str,
 ) -> None:
-    """
-    حالة فراغ تقترح الخطوة التالية بدل عبارة "لا توجد بيانات".
-    actions: [(نص الزر، مفتاح الصفحة، قيم session_state إضافية أو None)] - الأول هو الإجراء الأساسي.
-    key: بادئة فريدة لمفاتيح الأزرار (لأن الحالة قد تظهر أكثر من مرة في صفحة واحدة).
-    """
     with st.container(border=True):
         st.markdown(f"### {icon} {title}")
         st.write(message)

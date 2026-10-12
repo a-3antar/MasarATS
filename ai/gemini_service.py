@@ -1,12 +1,3 @@
-"""
-تكامل Gemini كمزوّد ذكاء اصطناعي، عبر مكتبة google-genai الجديدة.
-
-كل نداء فعلي لـ Gemini يبني عميل (Client) مستقل خاص به باستخدام مفتاح قادم من
-key_rotator.get_next_key() (تبديل دوري بين المفاتيح المتاحة) - لا توجد حالة
-مشتركة (global state) بين الـ Threads كما كان الحال مع genai.configure() القديمة.
-
-المرحلة الحالية: بدون أي rate limiting أو caching إضافي (كما طُلب صراحة).
-"""
 
 import json
 from typing import Any
@@ -26,17 +17,11 @@ _ATTACHED_FILE_NOTE = (
     "وإذا كان التصميم بعمودين فاقرأ كل عمود كاملاً، ثم استخرج البيانات.)"
 )
 
-# حدود حجم سياق الإجابات السابقة داخل prompt تقييم الإجابة
 _PRIOR_CONTEXT_MAX_CHARS = 4000
 _NO_PRIOR_CONTEXT = "لا يوجد"
 
 
 def _pydantic_to_gemini_schema(schema: type[BaseModel]) -> dict[str, Any]:
-    """
-    يحوّل Pydantic model إلى مخطط يقبله google-genai (نفس بنية الحقول المدعومة
-    في response_schema التي كانت تُستخدم مع google-generativeai: type, properties,
-    items, required, enum, nullable - بأحرف كبيرة للأنواع STRING/OBJECT/ARRAY...).
-    """
     json_schema = schema.model_json_schema()
     definitions: dict[str, Any] = json_schema.get("$defs", {})
 
@@ -73,7 +58,6 @@ def _pydantic_to_gemini_schema(schema: type[BaseModel]) -> dict[str, Any]:
 
 
 def _format_prior_context(prior_qa: list[tuple[str, str]] | None) -> str:
-    """يحوّل (سؤال، إجابة) لأسئلة المقابلة الأخرى إلى نص سياق مقتطع الحجم للـ prompt."""
     if not prior_qa:
         return _NO_PRIOR_CONTEXT
     block = "\n\n".join(f"س: {question}\nج: {answer}" for question, answer in prior_qa)
@@ -81,7 +65,6 @@ def _format_prior_context(prior_qa: list[tuple[str, str]] | None) -> str:
 
 
 class GeminiService(AIProvider):
-    """مزوّد الذكاء الاصطناعي المعتمد على Google Gemini (عبر google-genai)."""
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -97,7 +80,6 @@ class GeminiService(AIProvider):
         self._settings = settings
 
     def _client(self):
-        """عميل مستقل لكل نداء - يستخدم المفتاح التالي في التبديل الدوري. آمن للتوازي."""
         return self._genai.Client(api_key=get_next_key())
 
     def extract_structured(self, text: str, schema: type[BaseModel]) -> BaseModel:
@@ -107,7 +89,6 @@ class GeminiService(AIProvider):
         return self._extract(prompt, schema)
 
     def extract_structured_from_file(self, data: bytes, mime_type: str, schema: type[BaseModel]) -> BaseModel:
-        """نسخ + استخلاص في نداء واحد: Gemini يقرأ الـ PDF/الصورة مباشرة."""
         from google.genai import types
         from ai.prompts import CV_EXTRACTION_PROMPT_TEMPLATE
 
@@ -139,7 +120,6 @@ class GeminiService(AIProvider):
             raise AIServiceError(f"فشل استدعاء Gemini: {exc}") from exc
 
     def translate_json(self, data: dict[str, Any], target_language: str = "Arabic") -> dict[str, Any]:
-        """يترجم قيم dict إلى اللغة المطلوبة مع الحفاظ على البنية. يرفع AIServiceError عند الفشل."""
         from ai.prompts import TRANSLATION_PROMPT_TEMPLATE
 
         raw_text = ""
@@ -168,7 +148,6 @@ class GeminiService(AIProvider):
             raise AIServiceError(f"فشل ترجمة البيانات: {exc}") from exc
 
     def parse_search_query(self, query: str):
-        """يحوّل طلب بحث بلغة طبيعية إلى CandidateSearchFilters. يرفع AIServiceError عند الفشل."""
         from ai.prompts import NL_SEARCH_PROMPT_TEMPLATE
         from ai.schemas import CandidateSearchFilters
 
@@ -195,7 +174,6 @@ class GeminiService(AIProvider):
             raise AIServiceError(f"فشل فهم طلب البحث: {exc}") from exc
 
     def generate_interview_questions(self, job_text: str, candidate_text: str):
-        """يولّد أسئلة مقابلة مبنية على الوظيفة والمرشح. يرفع AIServiceError عند الفشل."""
         from ai.prompts import INTERVIEW_QUESTIONS_PROMPT_TEMPLATE
         from ai.schemas import InterviewQuestions
 
@@ -225,7 +203,6 @@ class GeminiService(AIProvider):
             raise AIServiceError(f"فشل توليد أسئلة المقابلة: {exc}") from exc
 
     def analyze_candidate(self, candidate_text: str):
-        """يولّد تحليلاً شاملاً للمرشح (مستوى وظيفي، نقاط قوة، فجوات، وظائف مناسبة). يرفع AIServiceError عند الفشل."""
         from ai.prompts import CV_ANALYSIS_PROMPT_TEMPLATE
         from ai.schemas import CandidateAnalysis
 
@@ -253,7 +230,6 @@ class GeminiService(AIProvider):
             raise AIServiceError(f"فشل تحليل المرشح: {exc}") from exc
 
     def analyze_job_description(self, description: str):
-        """يحوّل وصف وظيفة غير منظم إلى متطلبات مهيكلة (JobRequirements). يرفع AIServiceError عند الفشل."""
         from ai.prompts import JOB_ANALYSIS_PROMPT_TEMPLATE
         from ai.schemas import JobRequirements
 
@@ -283,10 +259,6 @@ class GeminiService(AIProvider):
     def evaluate_interview_answer(
         self, job_text: str, question: str, answer: str, prior_qa: list[tuple[str, str]] | None = None
     ):
-        """
-        يقيّم إجابة مرشح على سؤال مقابلة واحد. prior_qa (أسئلة/إجابات المقابلة الأخرى) تُرسل
-        كسياق مرجعي فقط ليلتقط النموذج معلومة ذُكرت في سؤال آخر. يرفع AIServiceError عند الفشل.
-        """
         from ai.prompts import ANSWER_EVALUATION_PROMPT_TEMPLATE
         from ai.schemas import AnswerEvaluation
 

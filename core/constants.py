@@ -1,9 +1,7 @@
-"""ثوابت مشتركة عبر التطبيق - بدل نشر الأرقام والقيم الثابتة داخل الكود (no magic numbers)."""
 
 ALLOWED_CV_EXTENSIONS: set[str] = {".pdf", ".docx", ".pptx", ".txt"}
 MAX_CV_FILE_SIZE_MB: int = 10
 
-# أوزان المطابقة الافتراضية (يمكن تعديلها لاحقاً لكل وظيفة على حدة)
 DEFAULT_MATCH_WEIGHTS: dict[str, float] = {
     "skills": 0.5,
     "experience": 0.3,
@@ -16,58 +14,49 @@ APPLICATION_STATUSES: list[str] = [
     "New", "Screening", "Shortlisted", "Interview", "Offer", "Hired", "Rejected",
 ]
 
-# استخراج صورة المرشح من السيرة الذاتية
 PHOTOS_SUBDIR: str = "uploads/photos"
-PHOTO_MIN_SIDE_PX: int = 100          # أصغر بُعد مقبول (يستبعد الأيقونات الصغيرة)
-PHOTO_MAX_ASPECT_RATIO: float = 1.6   # أقصى نسبة بين الطول والعرض (يستبعد الشعارات والشرائط العريضة)
-PHOTO_SEARCH_MAX_views: int = 2       # نبحث عن الصورة في أول صفحتين فقط
-PHOTO_MAX_SIDE_PX: int = 600          # تصغير الصورة المحفوظة لتوفير المساحة
+PHOTO_MIN_SIDE_PX: int = 100
+PHOTO_MAX_ASPECT_RATIO: float = 1.6
+PHOTO_SEARCH_MAX_views: int = 2
+PHOTO_MAX_SIDE_PX: int = 600
 
-CANDIDATE_STATUSES: list[str] = APPLICATION_STATUSES  # حالة المرشح تستخدم نفس مراحل خط التوظيف
+CANDIDATE_STATUSES: list[str] = APPLICATION_STATUSES
 
-# قراءة الصفحات الصورية عبر Gemini Vision
-OCR_DPI: int = 150                  # كافٍ للقراءة ويقلل حجم الصورة المرسلة
-OCR_MIN_CHARS_PER_PAGE: int = 30    # أقل من هذا العدد من الحروف → نعتبر الصفحة صورة
-OCR_MAX_views: int = 5              # أقصى عدد صفحات تُرسل للقراءة لكل ملف (حماية من التكلفة)
+OCR_DPI: int = 150
+OCR_MIN_CHARS_PER_PAGE: int = 30
+OCR_MAX_views: int = 5
 
-# استبعاد الصور التي هي في الحقيقة صفحة كاملة، واكتشاف الوجه كبديل
-PHOTO_MAX_PAGE_COVERAGE: float = 0.25  # صورة تغطي أكثر من هذه النسبة من مساحة الصفحة ليست صورة شخصية
-FACE_CROP_PADDING: float = 0.6         # هامش حول الوجه المكتشف (نسبة من عرض الوجه) ليظهر الرأس والكتفان
-FACE_MIN_SIZE_PX: int = 60             # أصغر وجه مقبول عند الاكتشاف
+PHOTO_MAX_PAGE_COVERAGE: float = 0.25
+FACE_CROP_PADDING: float = 0.6
+FACE_MIN_SIZE_PX: int = 60
 
-# كشف المرشحين المكررين
-DUPLICATE_NAME_SIMILARITY_THRESHOLD: float = 0.88  # أقل نسبة تشابه اسم تُعتبر تطابقاً ضعيفاً
-PHONE_MIN_DIGITS: int = 8                          # أقل من هذا لا يُعتبر رقماً صالحاً للمقارنة
-PHONE_MATCH_DIGITS: int = 10                       # نقارن آخر 10 أرقام (يتجاوز كود الدولة)
-DUPLICATE_SCAN_LIMIT: int = 100_000                # حد أمان لعدد المرشحين الممسوحين
+DUPLICATE_NAME_SIMILARITY_THRESHOLD: float = 0.88
+PHONE_MIN_DIGITS: int = 8
+PHONE_MATCH_DIGITS: int = 10
+DUPLICATE_SCAN_LIMIT: int = 100_000
 
-# مطابقة المهارات والبحث الذكي
-SKILL_FUZZY_THRESHOLD: float = 0.88   # أقل تشابه إملائي يُعتبر نفس المهارة
-SKILL_FUZZY_MIN_LENGTH: int = 5       # المهارات الأقصر (SAP, C#) تُقارن بتطابق تام فقط
-SEARCH_MAX_CANDIDATES: int = 5000     # حد أمان لعدد المرشحين الممسوحين في البحث الذكي
+SKILL_FUZZY_THRESHOLD: float = 0.88
+SKILL_FUZZY_MIN_LENGTH: int = 5
+SEARCH_MAX_CANDIDATES: int = 5000
 
-# إدارة المقابلات
 INTERVIEW_TYPES: list[str] = ["HR", "Technical", "Management", "Behavioral", "Final"]
 INTERVIEW_STATUSES: list[str] = ["Scheduled", "Completed", "Cancelled"]
 
-# التحليل الخلفي بالذكاء الاصطناعي
-AI_BACKGROUND_WORKERS: int = 2   # عدد التحليلات المتزامنة في الخلفية (حماية لحصة Gemini)
+AI_BACKGROUND_WORKERS: int = 2
 
-MAX_WORKERS = 6    # أقصى عدد عمليات متزامنة (مجموع كل الخلفيات: الصور + التحليل + غيرها)
+MAX_WORKERS = 6
 
-SCANNED_AVG_CHARS_PER_PAGE: int = 200   # متوسط أحرف أقل من هذا → PDF ممسوح
+SCANNED_AVG_CHARS_PER_PAGE: int = 200
 AI_RETRY_MAX_ATTEMPTS: int = 4
-AI_RETRY_BASE_SECONDS: float = 4.0      # الانتظار: 4 ثم 8 ثم 16 ثانية (+ jitter)
+AI_RETRY_BASE_SECONDS: float = 4.0
 ANALYSIS_PENDING, ANALYSIS_DONE, ANALYSIS_FAILED = "pending", "done", "failed"
 PHOTO_BACKGROUND_WORKERS: int = 2
 
-# لوحة المعلومات والتقارير
-DASHBOARD_TOP_SKILLS: int = 10        # عدد المهارات في رسم "الأكثر تكراراً"
-NEW_CV_DAYS: int = 7                  # "سير جديدة" = آخر كم يوماً
-QUALIFIED_SCORE_THRESHOLD: float = 60.0  # درجة المطابقة التي يُعتبر بعدها المرشح مؤهلاً
-MIN_CANDIDATES_PER_JOB: int = 3       # أقل من هذا العدد = وظيفة تحتاج مرشحين
+DASHBOARD_TOP_SKILLS: int = 10
+NEW_CV_DAYS: int = 7
+QUALIFIED_SCORE_THRESHOLD: float = 60.0
+MIN_CANDIDATES_PER_JOB: int = 3
 
-# المطابقة الهجينة (Hybrid): وزن التشابه الدلالي الافتراضي عندما لا تحدد الوظيفة وزناً خاصاً بها
 SEMANTIC_DEFAULT_WEIGHT: float = 0.2
 EMBEDDING_MODEL_NAME: str = "gemini-embedding-001"
 
@@ -76,29 +65,25 @@ INTERVIEW_DECISIONS: list[str] = ["Continue", "Additional", "Hold", "Not Selecte
 QUESTION_TYPES: list[str] = ["text", "choice", "rating"]
 QUESTION_DIFFICULTIES: list[str] = ["Low", "Medium", "High"]
 
-# صفحة الوظائف
 EMPLOYMENT_TYPES: list[str] = ["Full-time", "Part-time", "Contract", "Internship", "Temporary"]
 CAREER_LEVELS: list[str] = ["Intern", "Junior", "Mid-Level", "Senior", "Manager", "Director", "Executive"]
 DEFAULT_SALARY_CURRENCY: str = "EGP"
 DEFAULT_VACANCIES: int = 1
-MATCH_HIGH_THRESHOLD: float = 80.0     # توزيع المطابقة: عالية
-MATCH_MEDIUM_THRESHOLD: float = 50.0   # توزيع المطابقة: متوسطة (أقل منها منخفضة)
-SKILL_STRONG_COVERAGE: float = 0.5     # مهارة يملكها نصف المرشحين فأكثر = نقطة قوة
-SKILL_GAP_COVERAGE: float = 0.25       # مهارة يوثّقها أقل من ربع المرشحين = فجوة محتملة
-JOB_TREND_WEEKS: int = 8               # أسابيع الرسم المصغّر في بطاقات المؤشرات
-JOB_NEW_DAYS: int = 30                 # "هذا الشهر"
+MATCH_HIGH_THRESHOLD: float = 80.0
+MATCH_MEDIUM_THRESHOLD: float = 50.0
+SKILL_STRONG_COVERAGE: float = 0.5
+SKILL_GAP_COVERAGE: float = 0.25
+JOB_TREND_WEEKS: int = 8
+JOB_NEW_DAYS: int = 30
 JOB_INSIGHT_MAX_SKILLS: int = 6
 
-# العروض والتعيين
 OFFER_STATUSES: list[str] = ["Draft", "Sent", "Accepted", "Declined", "Withdrawn"]
 ACTIVE_OFFER_STATUSES: list[str] = ["Draft", "Sent", "Accepted"]
-MIN_HIRES_FOR_TIME_STATS: int = 3   # أقل عدد تعيينات لعرض متوسط/وسيط وقت التعيين
+MIN_HIRES_FOR_TIME_STATS: int = 3
 SECONDS_PER_DAY: int = 86_400
 
-# الصلاحيات: حدود العمليات الكمية لغير الأدمن
-BULK_DELETE_LIMIT: int = 2           # أقصى عدد سجلات تُحذف في عملية واحدة
-RECRUITER_MAX_UPLOAD_FILES: int = 5  # أقصى عدد سير ذاتية في دفعة رفع واحدة
+BULK_DELETE_LIMIT: int = 2
+RECRUITER_MAX_UPLOAD_FILES: int = 5
 
-# درجة المطابقة: عتبتان فقط في كل المشروع (تستخدمهما ui/theme.py)
 SCORE_GOOD: float = 75.0
 SCORE_MID: float = 50.0

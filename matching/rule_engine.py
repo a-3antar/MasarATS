@@ -1,8 +1,3 @@
-"""
-محرك مطابقة بسيط قائم على القواعد (Rule-based) فقط - بلا أي فهم دلالي (semantic).
-هذا يكفي للنسخة الأولى البسيطة، ويمكن استبداله لاحقاً بـ HybridEngine الذي
-يضيف مطابقة دلالية عبر AI دون تغيير أي كود يستدعي MatchingEngine.
-"""
 
 from typing import Any
 
@@ -18,7 +13,6 @@ def _normalize(value: str) -> str:
 
 
 class RuleBasedMatchingEngine(MatchingEngine):
-    """يحسب درجة مطابقة مفسَّرة (explainable) بين مرشح ووظيفة."""
 
     def calculate_match(self, candidate: Candidate, job: Job) -> dict[str, Any]:
         weights = job.match_weights or DEFAULT_MATCH_WEIGHTS
@@ -86,10 +80,9 @@ class RuleBasedMatchingEngine(MatchingEngine):
         if not job.location:
             return 100.0
         if not candidate.location:
-            return 50.0  # غير معروف - لا نعاقب المرشح كلياً
+            return 50.0
         return 100.0 if _normalize(job.location) in _normalize(candidate.location) else 40.0
 
     @staticmethod
     def _score_education(candidate: Candidate, job: Job) -> float:
-        # مبسّطة جداً في هذه المرحلة: وجود أي سجل تعليمي يكفي
         return 100.0 if candidate.education else 60.0

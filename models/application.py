@@ -1,4 +1,3 @@
-"""نموذج التقديم (جدول applications). يربط مرشحاً بوظيفة، ويخزن نتيجة المطابقة."""
 
 from datetime import datetime, timezone
 
@@ -14,7 +13,6 @@ def _utcnow() -> datetime:
 
 
 class Application(Base):
-    """تقديم مرشح على وظيفة محددة، مع درجة المطابقة وتفاصيلها."""
 
     __tablename__ = "applications"
 
@@ -23,10 +21,9 @@ class Application(Base):
     candidate_id: Mapped[int] = mapped_column(ForeignKey("candidates.id"), nullable=False, index=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"), nullable=False, index=True)
 
-    status: Mapped[str] = mapped_column(String(20), default=APPLICATION_STATUSES[0])  # "New"
+    status: Mapped[str] = mapped_column(String(20), default=APPLICATION_STATUSES[0])
 
     match_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    # تفصيل الدرجة لكل معيار + نقاط القوة والفجوات - لتفادي "درجة غامضة" (شرط الشفافية في المواصفات)
     match_breakdown: Mapped[dict] = mapped_column(JSON, default=dict)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)

@@ -1,4 +1,3 @@
-"""خدمة الهيكل التنظيمي: أقسام، مسميات، مديرو الأقسام، تبعية آلية، فجوات وتحذيرات ودراسة احتياج."""
 
 from collections import Counter
 
@@ -17,7 +16,7 @@ _POS_EDITABLE = {
     "title", "department_id", "reports_to_position_id", "required_headcount", "current_headcount", "sort_order",
 }
 _CLOSED = JOB_STATUSES[3]
-_MAX_DEPTH = 50  # حماية من الحلقات عند حساب العمق
+_MAX_DEPTH = 50
 
 
 class OrganizationService:
@@ -26,10 +25,8 @@ class OrganizationService:
         self._departments = DepartmentRepository(session)
         self._positions = PositionRepository(session)
 
-    # ------------------------------------------------------------ نظرة شاملة للواجهة
 
     def overview(self) -> dict:
-        """كل بيانات صفحة الهيكل (قواميس بسيطة قابلة للكاش) مع الترتيب والتحذيرات."""
         departments = self._departments.list_all()
         positions = self._positions.list_all()
         dept_names = {d.id: d.name for d in departments}
@@ -74,7 +71,7 @@ class OrganizationService:
                 "jobs": linked,
                 "active_jobs": len(active),
                 "open_vacancies": open_vacancies,
-                "uncovered": max(gap - open_vacancies, 0),  # فجوة لم تُغطَّ بعد بشواغر
+                "uncovered": max(gap - open_vacancies, 0),
             }
             row["warnings"] = self._position_warnings(row)
             position_rows.append(row)
@@ -118,7 +115,6 @@ class OrganizationService:
 
     @staticmethod
     def _depth(position_id: int, by_id: dict[int, Position]) -> int:
-        """عدد الرؤساء فوق المسمى (0 = قمة الهرم)."""
         depth, current, seen = 0, by_id.get(position_id), set()
         while current is not None and current.reports_to_position_id and current.id not in seen and depth < _MAX_DEPTH:
             seen.add(current.id)
@@ -139,7 +135,6 @@ class OrganizationService:
 
     @staticmethod
     def staffing_study(positions: list[dict]) -> list[dict]:
-        """دراسة الاحتياج: المسميات ذات الفجوة مرتبة بالأولوية (المدراء ثم الأعلى في الهرم ثم الأكبر فجوة)."""
         rows = []
         for p in positions:
             if p["gap"] <= 0:
@@ -154,7 +149,6 @@ class OrganizationService:
         rows.sort(key=lambda r: (not r["is_manager"], r["depth"], -r["gap"], r["title"]))
         return rows
 
-    # ------------------------------------------------------------ مزامنة الوظائف
 
     def _sync_job_departments(self, where_clause, department: Department | None) -> None:
         for job in self._session.scalars(select(Job).where(where_clause)):
@@ -164,7 +158,6 @@ class OrganizationService:
     def _count_jobs(self, where_clause) -> int:
         return self._session.scalar(select(func.count()).select_from(Job).where(where_clause)) or 0
 
-    # ------------------------------------------------------------ الأقسام
 
     def create_department(self, name: str, parent_department_id: int | None = None) -> Department:
         if not (name or "").strip():
@@ -195,7 +188,7 @@ class OrganizationService:
             self._sync_job_departments(Job.department_id == department_id, department)
         if "parent_department_id" in fields:
             self._session.flush()
-            self._apply_reporting(department)  # القسم انتقل: أعد ربط مديره بمدير القسم الأب الجديد
+            self._apply_reporting(department)
         return department
 
     def delete_department(self, department_id: int) -> None:
@@ -230,10 +223,8 @@ class OrganizationService:
     def list_departments(self) -> list[Department]:
         return self._departments.list_all()
 
-    # ------------------------------------------------------------ المديرون والتبعية الآلية
 
     def set_department_manager(self, department_id: int, position_id: int | None) -> Department:
-        """يحدد مسمى مدير القسم (أو None لإلغائه) ثم يربط التبعيات الفارغة آلياً."""
         department = self._get_department_or_raise(department_id)
         if position_id is None:
             department.manager_position_id = None
@@ -247,14 +238,12 @@ class OrganizationService:
         return department
 
     def _set_boss_if_empty(self, position: Position | None, boss_id: int | None) -> None:
-        """يضبط الرئيس فقط إن كان فارغاً ولا يُنشئ حلقة. لا يستبدل تبعية حددها المستخدم."""
         if position is None or boss_id is None or position.id == boss_id:
             return
         if position.reports_to_position_id is None and not self._position_would_cycle(position.id, boss_id):
             position.reports_to_position_id = boss_id
 
     def _apply_reporting(self, department: Department) -> None:
-        """يربط: أعضاء القسم ← مديره، مدير القسم ← مدير القسم الأب، مديرو الأقسام الفرعية ← مدير هذا القسم."""
         manager_id = department.manager_position_id
         if manager_id is not None:
             for position in self._positions.list_for_department(department.id):
@@ -271,7 +260,6 @@ class OrganizationService:
             self._set_boss_if_empty(self._positions.get_by_id(manager_id), parent.manager_position_id)
 
     def _auto_assign_boss(self, position: Position) -> None:
-        """تبعية آلية لمسمى بلا رئيس: مدير قسمه، أو مدير القسم الأب إن كان هو مدير قسمه."""
         if position.reports_to_position_id is not None or position.department_id is None:
             return
         department = self._departments.get_by_id(position.department_id)
@@ -294,12 +282,10 @@ class OrganizationService:
         return False
 
     def boss_title(self, position_id: int | None) -> str | None:
-        """اسم رئيس المسمى (يُستخدم لملء «يتبع لـ» في الوظيفة آلياً)."""
         position = self._positions.get_by_id(position_id) if position_id else None
         boss = self._positions.get_by_id(position.reports_to_position_id) if position and position.reports_to_position_id else None
         return boss.title if boss else None
 
-    # -------------------------------------------------------- المسميات الوظيفية
 
     def create_position(self, title: str, **fields) -> Position:
         if not (title or "").strip():
@@ -333,7 +319,7 @@ class OrganizationService:
             department_id = fields["department_id"]
             department = self._departments.get_by_id(department_id) if department_id is not None else None
             self._sync_job_departments(Job.position_id == position_id, department)
-            if old_department != department_id:  # انتقل من قسم: لم يعد مديراً له
+            if old_department != department_id:
                 for old in self._departments.list_all():
                     if old.manager_position_id == position_id and old.id != department_id:
                         old.manager_position_id = None

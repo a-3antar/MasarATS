@@ -1,4 +1,3 @@
-"""مولّدات HTML لصفحة الهيكل التنظيمي بنفس لغة تصميم صفحة الوظائف (ui/job_components.py). لا تصل للقاعدة."""
 
 import html
 
@@ -35,7 +34,6 @@ def _esc(value: str | None) -> str:
 
 
 def gap_badge(gap: int) -> str:
-    """شارة الفجوة: فجوة (أحمر)، مكتمل (أخضر)، زيادة عن المطلوب (برتقالي)."""
     if gap > 0:
         color, label = _COLOR_BAD, f"فجوة {gap}"
     elif gap < 0:
@@ -76,7 +74,6 @@ def _position_node(pos: dict, by_boss: dict, seen: frozenset,
     crown = "👑 " if pos.get("is_manager") else ""
     warn = " ⚠️" if pos.get("warnings") else ""
     dept_note = f' <span class="jb-muted">· 🏢 {_esc(pos["department"])}</span>' if show_dept and pos["department"] else ""
-    # مسمى جذر في قسمه لكن رئيسه في قسم آخر: نعرض اسم رئيسه
     ext_note = f' <span class="jb-muted">↗ يتبع: {_esc(pos["reports_to"])}</span>' if pos.get("_ext") else ""
     classes = "og-node" + (" og-manager" if pos.get("is_manager") else "") + (" og-warn" if pos.get("warnings") else "")
     tooltip = html.escape(" | ".join(pos.get("warnings") or []), quote=True)
@@ -89,7 +86,6 @@ def _position_node(pos: dict, by_boss: dict, seen: frozenset,
 
 
 def tree_html(departments: list[dict], positions: list[dict], mode: str = "departments") -> str:
-    """mode='departments': قسم ← مسمياته (الأبناء من نفس القسم فقط). mode='reporting': خطوط التبعية عبر الأقسام."""
     by_boss: dict = {}
     for pos in positions:
         by_boss.setdefault(pos["reports_to_id"], []).append(pos)
@@ -114,7 +110,7 @@ def tree_html(departments: list[dict], positions: list[dict], mode: str = "depar
             if boss is None:
                 roots.append(p)
             elif dept_of.get(boss) != dept["id"]:
-                roots.append({**p, "_ext": True})  # رئيسه في قسم آخر
+                roots.append({**p, "_ext": True})
         body_roots = "".join(_position_node(p, by_boss, frozenset()) for p in roots)
         subs = "".join(department_node(child) for child in dept_children.get(dept["id"], []))
         manager = f' · 👑 {_esc(dept["manager"])}' if dept.get("manager") else ""

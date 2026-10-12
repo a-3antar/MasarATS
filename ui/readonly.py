@@ -1,5 +1,3 @@
-"""حارس الأزرار: يعطّل تلقائياً كل زر كتابة لمن لا يملك صلاحية التعديل (Viewer).
-الاستثناءات (قائمة بيضاء) فقط للتنقل والبحث والتحديث وإجراءات الحساب الشخصي."""
 
 import functools
 
@@ -57,7 +55,6 @@ def _patch_module_function(name: str) -> None:
 
 
 def install_readonly_guard() -> None:
-    """يُستدعى مرة واحدة من app.py (آمن عند إعادة الاستدعاء)."""
     if getattr(DeltaGenerator, _PATCHED_FLAG, False):
         return
     for name in _WIDGETS:

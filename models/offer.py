@@ -1,4 +1,3 @@
-"""نموذج العرض الوظيفي (جدول offers). عرض واحد نشط كحد أقصى لكل تقديم."""
 
 from datetime import date, datetime, timezone
 
@@ -22,7 +21,6 @@ class Offer(Base):
     status: Mapped[str] = mapped_column(String(20), default=OFFER_STATUSES[0], nullable=False, index=True)
     salary: Mapped[float | None] = mapped_column(Float, nullable=True)
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    # آخر يوم يستطيع فيه المرشح الرد على العرض (يُشتق منه "ينتهي قريباً" و"منتهي")
     expires_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 

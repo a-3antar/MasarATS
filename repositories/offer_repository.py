@@ -1,4 +1,3 @@
-"""مستودع العروض: استعلامات خاصة بجدول offers."""
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session

@@ -1,6 +1,3 @@
-"""خدمة أسئلة المقابلة: كل سؤال تابع لمقابلة واحدة (مرشح + وظيفة + تاريخ). إضافة/تعديل/حذف يدوي، توليد
-بالذكاء الاصطناعي، واستيراد اختياري لأسئلة مقابلة أخرى (نص فقط، بدون إجابات) للمقارنة بين المرشحين.
-أوزان الكفاءات تبقى على مستوى الوظيفة."""
 
 import re
 
@@ -39,7 +36,6 @@ def split_options(raw: str) -> list[str]:
 
 
 def _norm(text: str) -> str:
-    """صيغة مقارنة للسؤال (لمطابقة نفس السؤال بين مقابلات مختلفة)."""
     return " ".join((text or "").lower().split())
 
 
@@ -48,7 +44,6 @@ class QuestionBankService:
         self._session = session
         self._questions = JobQuestionRepository(session)
 
-    # ------------------------------------------------------------ قراءة
 
     def list_for_interview(self, interview_id: int) -> list[JobQuestion]:
         return self._questions.get_for_interview(interview_id)
@@ -63,7 +58,6 @@ class QuestionBankService:
             raise ValidationError("المقابلة غير موجودة.")
         return application.job_id
 
-    # ------------------------------------------------------------ إضافة / تعديل / حذف
 
     def add_question(
         self, interview_id: int, text: str, *, question_type: str = "text", options: list[str] | None = None,
@@ -94,7 +88,6 @@ class QuestionBankService:
             raise ValidationError(f"مستوى صعوبة غير صالح: {difficulty}")
 
     def sync_bulk_text(self, interview_id: int, raw_text: str) -> dict:
-        """يزامن أسئلة المقابلة مع نص textarea (سؤال لكل سطر). يرجع {updated, added, removed}."""
         lines = split_questions(raw_text)
         existing = self.list_for_interview(interview_id)
         common = min(len(existing), len(lines))
@@ -120,7 +113,6 @@ class QuestionBankService:
                 "removed": len(removed)}
 
     def add_ai_questions(self, interview_id: int, result) -> list[JobQuestion]:
-        """يضيف أسئلة مولّدة بالذكاء الاصطناعي (InterviewQuestions) إلى هذه المقابلة فقط."""
         job_id = self._job_id_of(interview_id)
         sections = [
             ("cv_specific", result.cv_specific), ("technical", result.technical),
@@ -164,7 +156,6 @@ class QuestionBankService:
         self._questions.delete(question)
 
     def delete_for_interview(self, interview_id: int) -> None:
-        """حذف كل أسئلة المقابلة وإجاباتها (عند حذف المقابلة)."""
         ids = [q.id for q in self.list_for_interview(interview_id)]
         if ids:
             self._session.execute(delete(InterviewAnswer).where(InterviewAnswer.question_id.in_(ids)))
@@ -176,10 +167,8 @@ class QuestionBankService:
             raise ValidationError("السؤال غير موجود.")
         return question
 
-    # ------------------------------------------------------------ استيراد ومقارنة (اختياري)
 
     def importable_interviews(self, interview_id: int, same_job_only: bool = True) -> list[dict]:
-        """مقابلات أخرى لها أسئلة يمكن استيرادها، الأحدث أولاً (افتراضياً لنفس الوظيفة)."""
         job_id = self._job_id_of(interview_id)
         stmt = (
             select(Interview, Candidate.full_name, Application.job_id)
@@ -203,7 +192,6 @@ class QuestionBankService:
         return rows
 
     def import_from_interview(self, target_id: int, source_id: int) -> int:
-        """ينسخ نص أسئلة مقابلة أخرى (بدون إجابات) متخطياً المكرر. يرجع عدد المنسوخ."""
         if target_id == source_id:
             raise ValidationError("اختر مقابلة مختلفة للاستيراد منها.")
         job_id = self._job_id_of(target_id)
@@ -221,7 +209,6 @@ class QuestionBankService:
         return copied
 
     def compare(self, interview_ids: list[int]) -> list[dict]:
-        """الأسئلة المتطابقة النص بين مقابلتين فأكثر مع الدرجة الفعلية لكل مقابلة: [{question, scores{id: درجة}}]."""
         rows: dict[str, dict] = {}
         for iid in interview_ids:
             answers = {
@@ -235,7 +222,6 @@ class QuestionBankService:
                 row["scores"][iid] = answer.eval_score if answer else None
         return [r for r in rows.values() if len(r["scores"]) >= 2]
 
-    # ------------------------------------------------------------ أوزان الكفاءات (على مستوى الوظيفة)
 
     def competency_weights_text(self, job_id: int) -> str:
         job = self._session.get(Job, job_id)
@@ -269,11 +255,6 @@ class QuestionBankService:
 
 
 def migrate_legacy_bank(session: Session) -> int:
-    """
-    ترحيل لمرة واحدة: كل سؤال قديم في بنك وظيفة (interview_id = NULL) يُنسخ إلى كل مقابلة قائمة لتلك الوظيفة،
-    وتُعاد إجابات المقابلة إلى نسختها، ثم تُحذف الأسئلة القديمة. يرجع عدد الأسئلة المنسوخة.
-    تنبيه: أسئلة وظيفة لا توجد لها أي مقابلة تُحذف أيضاً (لأن الأسئلة لم تعد تُحفظ إلا داخل مقابلة).
-    """
     legacy = list(session.scalars(select(JobQuestion).where(JobQuestion.interview_id.is_(None))))
     if not legacy:
         return 0

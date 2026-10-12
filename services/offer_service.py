@@ -1,4 +1,3 @@
-"""خدمة العروض والتعيين. القرار بشري دائماً: قبول العرض لا يعيّن تلقائياً، والتعيين خطوة منفصلة مؤكَّدة."""
 
 from datetime import date, datetime, timezone
 
@@ -31,10 +30,9 @@ _TRANSITIONS = {
 _RESPONDED = {_ACCEPTED, _DECLINED, _WITHDRAWN}
 _STAGE_INDEX = {s: i for i, s in enumerate(APPLICATION_STATUSES)}
 
-# حالات للعرض فقط تُشتق من تاريخ الانتهاء (لا تُخزَّن في القاعدة)
 EXPIRING_SOON = "ExpiringSoon"
 EXPIRED = "Expired"
-EXPIRING_SOON_DAYS = 3  # عرض مُرسل ينتهي خلال هذا العدد من الأيام = "ينتهي قريباً"
+EXPIRING_SOON_DAYS = 3
 
 
 def _utcnow() -> datetime:
@@ -48,11 +46,9 @@ class OfferService:
         self._applications = ApplicationRepository(session)
         self._app_service = ApplicationService(session)
 
-    # ------------------------------------------------------------ قراءة
 
     @staticmethod
     def derive_display_status(status: str, expires_at: date | None, today: date | None = None) -> str:
-        """الحالة المعروضة: العرض المُرسل يصبح "ينتهي قريباً" أو "منتهي" حسب تاريخ الانتهاء."""
         if status == _SENT and expires_at is not None:
             remaining = (expires_at - (today or date.today())).days
             if remaining < 0:
@@ -62,7 +58,6 @@ class OfferService:
         return status
 
     def eligible_applications(self) -> list[dict]:
-        """تقديمات يجوز إصدار عرض لها (قائمة مختصرة/مقابلة/عرض) وليس لها عرض نشط."""
         busy = self._offers.active_application_ids()
         stmt = (
             select(Application, Candidate, Job)
@@ -91,11 +86,9 @@ class OfferService:
         ]
 
     def interview_stage_count(self) -> int:
-        """عدد التقديمات الموجودة حالياً في مرحلة المقابلة (لعرض مسار التوظيف)."""
         stmt = select(func.count()).select_from(Application).where(Application.status == _INTERVIEW_STAGE)
         return self._session.scalar(stmt) or 0
 
-    # ------------------------------------------------------------ كتابة
 
     @staticmethod
     def _validate_money_and_expiry(salary: float | None, expires_at: date | None, current: date | None) -> None:
@@ -152,7 +145,6 @@ class OfferService:
         return offer
 
     def hire(self, offer_id: int, changed_by: str | None = None) -> Application:
-        """تعيين المرشح بعد قبول العرض (إجراء بشري صريح). يزيد current_headcount للمسمى المرتبط."""
         offer = self._get_or_raise(offer_id)
         if offer.status != _ACCEPTED:
             raise ValidationError("لا يمكن التعيين قبل قبول المرشح للعرض.")

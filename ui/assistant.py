@@ -1,6 +1,3 @@
-"""مساعد SmartATS العام في الشريط الجانبي: بحث بلغة طبيعية من أي صفحة.
-لا نظام بحث ثانٍ: يعيد استخدام بحث الصفحة الرئيسية (SearchService + الرجوع للبحث النصي).
-البحث يُنفَّذ عند الإرسال فقط، والنتائج المختصرة تُحفظ في session_state حتى لا يُعاد الحساب مع كل rerun."""
 
 import streamlit as st
 
@@ -9,11 +6,10 @@ from ui.navigation import NAV_KEY, go_to
 
 _RESULTS_KEY = "sb_ask_results"
 _MAX_RESULTS = 5
-_HOME_LABEL = "🏠 الرئيسية"  # الرئيسية فيها مربع «اسأل SmartATS» نفسه
+_HOME_LABEL = "🏠 الرئيسية"
 
 
 def _run_search(query: str) -> None:
-    """ينفّذ البحث ويحفظ نتائج مختصرة: {query, interpreted, total, items: [...]}."""
     from views import home as home_view
 
     try:
@@ -72,7 +68,6 @@ def _render_results(state: dict) -> None:
 
 
 def render_sidebar_assistant() -> None:
-    """زر «اسأل SmartATS» في الشريط الجانبي (يختفي في الصفحة الرئيسية)."""
     if st.session_state.get(NAV_KEY) == _HOME_LABEL:
         return
     with st.popover("🤖 اسأل SmartATS", width="stretch"):

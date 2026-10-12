@@ -1,11 +1,9 @@
-"""تحليل شامل للمرشح عبر Gemini: مستوى وظيفي، نقاط قوة، فجوات محتملة، ووظائف مناسبة - بناءً على بيانات السيرة الفعلية فقط."""
 
 from ai.schemas import CandidateAnalysis
 from models.candidate import Candidate
 
 
 def candidate_context(candidate: Candidate) -> str:
-    """نص بيانات المرشح المُرسل للنموذج. يُستخدم أيضاً لحساب input_hash للكاش."""
     parts = [f"الاسم: {candidate.full_name}"]
     if candidate.current_position:
         parts.append(f"المسمى الحالي: {candidate.current_position}")
@@ -30,7 +28,6 @@ def candidate_context(candidate: Candidate) -> str:
 
 
 def analyze_candidate(context: str) -> CandidateAnalysis:
-    """يولّد تحليل الذكاء الاصطناعي من نص بيانات المرشح الجاهز. يرفع AIServiceError عند الفشل."""
     from ai.gemini_service import GeminiService
 
     return GeminiService().analyze_candidate(context)

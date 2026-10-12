@@ -1,9 +1,3 @@
-"""تصدير أسئلة الوظيفة إلى ملف Word قابل للتعبئة، واستيراد الإجابات منه بعد التعبئة.
-
-كل سؤال يحمل معرّفاً مخفياً [Q#<id>] في نفس فقرة السؤال، ويحمل الملف كله معرّف الوظيفة
-[JOB#<id>]. المطابقة عند الاستيراد تتم بالمعرّف فقط (وليس بنص السؤال) فلا تتأثر بأي تعديل
-عرضي في صياغة السؤال، ولا يُقبل ملف تابع لوظيفة أخرى.
-"""
 
 import io
 import re
@@ -12,7 +6,7 @@ from typing import TYPE_CHECKING
 from core.exceptions import DocumentParsingError, ValidationError
 from core.logging import get_logger
 
-if TYPE_CHECKING:  # للـ type hints فقط - بدون استيراد فعلي
+if TYPE_CHECKING:
     from models.interview import Interview
     from models.job import Job
     from models.job_question import JobQuestion
@@ -21,12 +15,12 @@ if TYPE_CHECKING:  # للـ type hints فقط - بدون استيراد فعلي
 
 logger = get_logger(__name__)
 _QUESTION_MARKER_RE = re.compile(r"\[Q#(\d+)\]")
-_INTERVIEW_MARKER_RE = re.compile(r"\[INT#(\d+)\]")   # بدل _JOB_MARKER_RE
+_INTERVIEW_MARKER_RE = re.compile(r"\[INT#(\d+)\]")
 _ANSWER_LABEL = "الإجابة:"
 _ANSWER_LABEL_RE = re.compile(r"^الإجابة\s*[:：]")
 _SEPARATOR_CHAR = "─"
 _SEPARATOR = _SEPARATOR_CHAR * 40
-_ANSWER_BLANK_LINES = 3  # عدد الأسطر الفارغة تحت كل سؤال كمساحة كتابة
+_ANSWER_BLANK_LINES = 3
 _RATIONALE_PREFIX = "💡"
 
 _CATEGORY_LABELS = {
@@ -44,10 +38,8 @@ _PPR_SUCCESSORS = (
 )
 
 
-# ------------------------------------------------------------------ التصدير
 
 def _make_rtl(paragraph) -> None:
-    """يجعل اتجاه الفقرة من اليمين لليسار (يُدرَج w:bidi في موضعه الصحيح حسب مخطط OOXML)."""
     from docx.oxml import OxmlElement
 
     properties = paragraph._p.get_or_add_pPr()
@@ -68,7 +60,6 @@ def _add_run(paragraph, text: str, *, bold: bool = False, italic: bool = False, 
 
 
 def _add_hidden_marker(paragraph, marker: str) -> None:
-    """ماركر شبه غير مرئي (خط 1pt أبيض) لكنه نص عادي يقرؤه python-docx عند الاستيراد."""
     from docx.shared import Pt, RGBColor
 
     run = paragraph.add_run(marker)
@@ -78,11 +69,6 @@ def _add_hidden_marker(paragraph, marker: str) -> None:
 def export_questions_docx(
     interview: "Interview", job: "Job", candidate_name: str, questions: list["JobQuestion"]
 ) -> bytes:
-    """
-    يبني ملف Word فيه أسئلة هذه المقابلة فقط، وتحت كل سؤال مساحة لكتابة الإجابة.
-    الملف يحمل علامة المقابلة [INT#id] فلا يُقبل عند الاستيراد إلا في المقابلة نفسها.
-    يرفع ValidationError إذا لم توجد أسئلة.
-    """
     if not questions:
         raise ValidationError("لا توجد أسئلة في هذه المقابلة لتصديرها. أضف أسئلة أولاً.")
 
@@ -144,14 +130,8 @@ def export_questions_docx(
     document.save(buffer)
     return buffer.getvalue()
 
-# ------------------------------------------------------------------ الاستيراد
 
 def _extract_answer(lines: list[str]) -> str:
-    """
-    يستخرج نص الإجابة من الأسطر الواقعة بين ماركر سؤال والماركر التالي.
-    - الحالة العادية: كل ما يلي «الإجابة:» (بما فيه ما كُتب في نفس سطرها).
-    - إن حذف المستخدم تسمية «الإجابة:»: نأخذ كل الأسطر ما عدا الملاحظة التوضيحية والفاصل.
-    """
     label_index = next((i for i, line in enumerate(lines) if _ANSWER_LABEL_RE.match(line)), None)
     if label_index is not None:
         remainder = _ANSWER_LABEL_RE.sub("", lines[label_index], count=1).strip()
@@ -163,11 +143,6 @@ def _extract_answer(lines: list[str]) -> str:
     return "\n".join(body).strip()
 
 def parse_answers_docx(file_bytes: bytes, expected_interview_id: int | None = None) -> dict[int, str]:
-    """
-    يقرأ ملف Word معبّأ ويرجع {question_id: answer_text} للأسئلة التي كُتبت لها إجابة فعلاً.
-    - expected_interview_id: إن مُرِّر ووُجدت علامة مقابلة في الملف يجب أن تطابقه، وإلا ValidationError.
-    - يرفع DocumentParsingError إذا لم يكن الملف صالحاً أو لا يحتوي أي علامة سؤال.
-    """
     try:
         import docx
     except ImportError as exc:

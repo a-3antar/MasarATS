@@ -1,4 +1,3 @@
-"""تعريف مجرّد (Abstract) لأي محلّل مستند - كل صيغة ملف تنفّذ نفس الواجهة."""
 
 import io
 from abc import ABC, abstractmethod
@@ -11,12 +10,10 @@ from core.constants import (
     PHOTO_MIN_SIDE_PX,
 )
 
-# (بيانات الصورة، الامتداد، العرض، الارتفاع)
 PhotoCandidate = tuple[bytes, str, int, int]
 
 
 def _looks_like_photo(width: int, height: int) -> bool:
-    """صورة شخصية محتملة: ليست صغيرة جداً ولا شريطاً عريضاً/طويلاً (شعار، خط فاصل...)."""
     if min(width, height) < PHOTO_MIN_SIDE_PX:
         return False
     return max(width, height) / min(width, height) <= PHOTO_MAX_ASPECT_RATIO
@@ -27,11 +24,6 @@ def pick_best_photo(
     page_area: float | None = None,
     max_coverage: float = 1.0,
 ) -> tuple[bytes, str] | None:
-    """
-    يختار أكبر صورة تبدو شخصية، أو None إن لم توجد.
-    إذا مُرِّرت page_area فالصور التي تغطي أكثر من max_coverage من مساحة الصفحة تُستبعد
-    (لأنها غالباً صورة الصفحة كاملة وليست صورة شخصية).
-    """
     best: tuple[bytes, str] | None = None
     best_area = 0
     for data, extension, width, height in images:
@@ -47,11 +39,6 @@ def pick_best_photo(
 
 
 def crop_face_from_image(image_bytes: bytes) -> tuple[bytes, str] | None:
-    """
-    يكتشف وجه صاحب السيرة في صورة (مثل صفحة سيرة ذاتية مصدّرة كصورة) ويقصّه مع هامش.
-    الأولوية لـ Gemini (أدق مع الصور الصغيرة/الدائرية)، ثم OpenCV Haar كاحتياط.
-    يرجع (بيانات PNG، "png") أو None إن لم يوجد وجه.
-    """
     try:
         from PIL import Image
     except ImportError:
@@ -66,7 +53,6 @@ def crop_face_from_image(image_bytes: bytes) -> tuple[bytes, str] | None:
             return None
 
         x, y, w, h = box
-        # قص مربع مركزه مركز الوجه، بضلع = أكبر بُعد للوجه + هامش
         side = int(max(w, h) * (1 + 2 * FACE_CROP_PADDING))
         center_x, center_y = x + w // 2, y + h // 2
         left = max(center_x - side // 2, 0)
@@ -82,7 +68,6 @@ def crop_face_from_image(image_bytes: bytes) -> tuple[bytes, str] | None:
 
 
 def _face_box_from_gemini(image_bytes: bytes, width: int, height: int) -> tuple[int, int, int, int] | None:
-    """صندوق الوجه (x, y, w, h) بالبكسل من Gemini، أو None."""
     from ai.vision import detect_face_box
 
     ratios = detect_face_box(image_bytes)
@@ -93,7 +78,6 @@ def _face_box_from_gemini(image_bytes: bytes, width: int, height: int) -> tuple[
 
 
 def _face_box_from_haar(rgb) -> tuple[int, int, int, int] | None:
-    """صندوق الوجه (x, y, w, h) بالبكسل من OpenCV Haar، أو None."""
     try:
         import cv2
         import numpy as np
@@ -111,21 +95,16 @@ def _face_box_from_haar(rgb) -> tuple[int, int, int, int] | None:
     return int(x), int(y), int(w), int(h)
 
 class DocumentParser(ABC):
-    """واجهة موحّدة لاستخلاص النص (والصورة) من أي نوع ملف سيرة ذاتية."""
 
     @abstractmethod
     def extract_text(self, file_path: str) -> str:
-        """استخلاص النص الكامل من الملف. يرفع DocumentParsingError عند الفشل."""
         raise NotImplementedError
 
     def extract_photo(self, file_path: str) -> tuple[bytes, str] | None:
-        """استخراج صورة المرشح (بيانات، امتداد) إن وُجدت. الافتراضي: لا توجد صورة."""
         return None
 
     def is_scanned(self, file_path: str) -> bool:
-        """هل الملف صفحات صورية تحتاج قراءة بصرية؟ الافتراضي: لا."""
         return False
 
     def render_first_page_png(self, file_path: str) -> bytes | None:
-        """صورة الصفحة الأولى (للبحث عن الوجه لاحقاً في الخلفية). الافتراضي: لا شيء."""
         return None

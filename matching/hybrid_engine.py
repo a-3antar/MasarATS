@@ -1,6 +1,3 @@
-"""محرك مطابقة هجين: يجمع المحرك القاعدي (مهارات/خبرة/موقع/تعليم - مفسَّر بالكامل) مع محرك دلالي
-يلتقط تشابهاً معنوياً قد تفوّته المطابقة الحرفية للمهارات (صياغات مختلفة لنفس الخبرة).
-يحسب الـ embeddings عند الحاجة فقط عبر EmbeddingService (كاش)."""
 
 from typing import Any
 
@@ -40,11 +37,9 @@ class HybridMatchingEngine(MatchingEngine):
         return {"score": total, "breakdown": breakdown, "strengths": strengths, "gaps": gaps}
 
     def warm_up_candidates(self, candidates: list[Candidate], job: Job) -> None:
-        """يحسب embeddings كل المرشحين بالتوازي قبل حلقة التسجيل (وظيفة ← مرشحون)."""
         self._embeddings.ensure_job_embedding(job)
         self._embeddings.ensure_many_candidate_embeddings(candidates)
 
     def warm_up_jobs(self, candidate: Candidate, jobs: list[Job]) -> None:
-        """يحسب embeddings كل الوظائف بالتوازي قبل حلقة التسجيل (مرشح ← وظائف)."""
         self._embeddings.ensure_candidate_embedding(candidate)
         self._embeddings.ensure_many_job_embeddings(jobs)

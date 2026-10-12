@@ -1,6 +1,3 @@
-"""مسار التوظيف: لوحة واحدة لمراحل المرشحين (جديد ← فرز ← قائمة مختصرة ← مقابلة ← عرض ← تعيين).
-لا منطق أعمال هنا: النقل عبر ApplicationService (يسجّل التاريخ ويزامن حالة المرشح)،
-والتعيين يبقى حصراً من صفحة العروض بعد قبول العرض (قرار بشري)."""
 
 import html
 
@@ -35,7 +32,6 @@ _STAGE_COLORS = {
     "New": "#64748b", "Screening": "#3b82f6", "Shortlisted": "#d9a21b", "Interview": "#f59e0b",
     "Offer": "#d9487a", "Hired": "#16a34a", "Rejected": "#b91c1c",
 }
-# المرحلة ← (نص الإجراء التالي، المرحلة الجديدة أو None، صفحة الانتقال أو None، حالة session_state)
 _NEXT = {
     "New": ("بدء الفرز", "Screening", None, {}),
     "Screening": ("قائمة مختصرة", "Shortlisted", None, {}),
@@ -56,7 +52,6 @@ _CSS = """<style>
 </style>"""
 
 
-# ------------------------------------------------------------ بيانات (مخزّنة مؤقتاً)
 
 @st.cache_data(ttl=_TTL, show_spinner=False)
 def _jobs() -> list[tuple[int, str]]:
@@ -66,7 +61,6 @@ def _jobs() -> list[tuple[int, str]]:
 
 @st.cache_data(ttl=_TTL, show_spinner=False)
 def _load(job_id: int | None) -> list[dict]:
-    """تقديمات وظيفة (أو كل الوظائف) مع المرشح، الأعلى مطابقة أولاً."""
     stmt = (
         select(Application, Candidate, Job.title)
         .join(Candidate, Candidate.id == Application.candidate_id)
@@ -88,13 +82,11 @@ def _load(job_id: int | None) -> list[dict]:
 
 
 def clear_cache() -> None:
-    """يمسح كاش هذه الصفحة فقط. يُستدعى من ui.helpers.invalidate_all (لا تستدعِ invalidate_all من هنا)."""
     _load.clear()
     _jobs.clear()
 
 
 def _move(app_id: int, new_status: str) -> None:
-    """callback: نقل التقديم عبر ApplicationService (تاريخ + مزامنة حالة المرشح + الهيكل)."""
     try:
         user = (st.session_state.get("user") or {}).get("full_name")
         with get_db_session() as session:
@@ -105,7 +97,6 @@ def _move(app_id: int, new_status: str) -> None:
         st.toast(str(exc))
 
 
-# ------------------------------------------------------------ مكوّنات العرض
 
 def _score_text(score: float | None) -> str:
     if score is None:
@@ -115,7 +106,6 @@ def _score_text(score: float | None) -> str:
 
 
 def _interview_state(r: dict) -> dict:
-    """قيم صفحة المقابلات المطابقة لهذا التقديم (نفس صيغة عناوين تلك الصفحة)."""
     label = f"{r['name']} · مطابقة {r['score']}% · {r['status']}" if r["score"] is not None \
         else f"{r['name']} · {r['status']}"
     return {"iv_job_select": f"{r['job']} (#{r['job_id']})", "iv_app_select": label}

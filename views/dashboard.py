@@ -1,4 +1,3 @@
-"""لوحة المعلومات: مؤشرات رئيسية ورسوم تفاعلية للتوظيف."""
 
 import streamlit as st
 
@@ -6,7 +5,7 @@ from database.database import get_db_session
 from services.report_service import ReportService
 from ui import charts
 
-_CACHE_TTL = 30  # ثوانٍ - الأرقام لا تتغير كل ثانية
+_CACHE_TTL = 30
 
 
 @st.cache_data(ttl=_CACHE_TTL, show_spinner=False)

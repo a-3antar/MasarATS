@@ -1,4 +1,3 @@
-"""إرسال البريد الإلكتروني عبر SMTP (مستخدم حالياً لكود استعادة كلمة المرور)."""
 
 import smtplib
 import ssl
@@ -16,7 +15,6 @@ _SSL_PORT = 465
 class EmailService:
     @staticmethod
     def send(to_address: str, subject: str, body: str) -> None:
-        """يرسل رسالة نصية. يرفع ConfigurationError إن لم يُضبط SMTP أو فشل الإرسال."""
         settings = get_settings()
         if not settings.email_enabled:
             raise ConfigurationError("خدمة البريد غير مضبوطة. تواصل مع مسؤول النظام.")

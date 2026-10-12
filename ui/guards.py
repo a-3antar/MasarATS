@@ -1,4 +1,3 @@
-"""مساعدات صلاحيات للصفحات (تعتمد على المستخدم الحالي في الجلسة)."""
 
 from core.auth_context import get_current_role
 from core.enums import UserRole

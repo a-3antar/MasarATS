@@ -1,11 +1,9 @@
-"""تعدادات (Enums) مشتركة عبر التطبيق."""
 
 from enum import Enum
 
 
 class UserRole(str, Enum):
-    """أدوار المستخدمين داخل النظام. تُستخدم لاحقاً للتحكم في الصلاحيات (RBAC)."""
 
-    ADMIN = "admin"           # صلاحيات كاملة: إدارة مستخدمين + كل البيانات
-    RECRUITER = "recruiter"   # الاستخدام اليومي: مرشحين، وظائف، مطابقة
-    VIEWER = "viewer"         # قراءة فقط: تقارير ولوحات المعلومات
+    ADMIN = "admin"
+    RECRUITER = "recruiter"
+    VIEWER = "viewer"

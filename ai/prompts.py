@@ -1,4 +1,3 @@
-"""نصوص الأوامر (Prompts) منفصلة عن كود المنطق - يسهّل تعديلها دون لمس الخدمات."""
 
 CV_EXTRACTION_PROMPT_TEMPLATE = """أنت مساعد استخلاص بيانات من سيرة ذاتية.
 اقرأ النص التالي واستخرج فقط المعلومات الموجودة صراحة فيه.
@@ -130,7 +129,6 @@ JOB_ANALYSIS_PROMPT_TEMPLATE = """أنت خبير توظيف وموارد بشر
 ---
 """
 
-# ai/prompts.py: غيّر الرقم عند أي تعديل على نص CV_ANALYSIS_PROMPT_TEMPLATE ليُعاد التحليل تلقائياً
 CV_ANALYSIS_PROMPT_VERSION = "CV_ANALYSIS_PROMPT_V1"
 
 ANSWER_EVALUATION_PROMPT_TEMPLATE = """أنت خبير توظيف تقيّم إجابة مرشح على سؤال مقابلة واحد لمساعدة المُقابِل (لا لاتخاذ القرار بدلاً منه).

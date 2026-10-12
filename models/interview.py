@@ -1,4 +1,3 @@
-"""نموذج المقابلة (جدول interviews). يرتبط بتقديم واحد (candidate + job) عبر applications."""
 
 from datetime import datetime, timezone
 
@@ -14,12 +13,11 @@ def _utcnow() -> datetime:
 
 
 class Interview(Base):
-    """مقابلة واحدة ضمن مسار تقديم مرشح على وظيفة."""
 
     __tablename__ = "interviews"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    code: Mapped[str | None] = mapped_column(String(20), index=True, nullable=True)  # INT-2026-0045
+    code: Mapped[str | None] = mapped_column(String(20), index=True, nullable=True)
 
     application_id: Mapped[int] = mapped_column(ForeignKey("applications.id"), nullable=False, index=True)
 
@@ -28,19 +26,17 @@ class Interview(Base):
 
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     interviewer: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    location: Mapped[str | None] = mapped_column(String(255), nullable=True)  # مكان أو رابط اجتماع
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    questions: Mapped[str | None] = mapped_column(Text, nullable=True)  # قديم - غير مستخدم في الواجهة الجديدة
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)  # ملاحظات المُقابِل (لا يستنتجها الذكاء الاصطناعي)
+    questions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
     evaluation: Mapped[int | None] = mapped_column(Integer, nullable=True)
     next_action: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # التقييم النهائي (من 100): محسوب من الإجابات/الكفاءات، أو مُعدَّل يدوياً
     overall_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    overall_method: Mapped[str | None] = mapped_column(String(10), nullable=True)  # "auto" أو "manual"
+    overall_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
     overall_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # قرار بشري فقط: Continue / Additional / Hold / Not Selected
     decision: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)

@@ -1,6 +1,3 @@
-"""الصفحة الرئيسية كمركز قيادة للتوظيف: سؤال/بحث بلغة طبيعية، إجراءات سريعة، مؤشرات، مسار التوظيف،
-وما يحتاج انتباهك. الأرقام كلها من HomeService (القاعدة الفعلية) والبحث يعيد استخدام SearchService
-عبر دوال صفحة المرشحين المخزّنة مؤقتاً - لا منطق أعمال ولا نظام بحث ثانٍ هنا."""
 
 import streamlit as st
 
@@ -18,7 +15,6 @@ _ASK_KEY = "home_ask_query"
 _MAX_ASK_RESULTS = 5
 _ACTION_COLUMNS = 3
 
-# (أيقونة، عنوان، توضيح، مفتاح الصفحة، قيم session_state، إجراء أساسي؟)
 _QUICK_ACTIONS = [
     ("📄", "إضافة سيرة ذاتية", "ارفع ملفات PDF أو Word وسيستخرج النظام البيانات تلقائياً.", "upload_cv", {}, True),
     ("💼", "إنشاء وظيفة", "حدّد الوظيفة المطلوبة ومتطلباتها.", "jobs", {OPEN_CREATE_JOB: True}, False),
@@ -35,13 +31,8 @@ def _home_data() -> dict:
         return HomeService(session).overview()
 
 
-# ------------------------------------------------------------ اسأل SmartATS
 
 def _search(query: str) -> tuple[list[tuple], str | None, dict]:
-    """
-    بحث بلغة طبيعية عبر نفس دوال صفحة المرشحين (SearchService + كاش Gemini)،
-    مع الرجوع للبحث النصي العادي إن فشل الفهم الذكي. يرجع (النتائج [(مرشح، سبب)]، وصف الفلاتر أو None، ملخص المطابقة).
-    """
     from views import candidates as candidates_view
 
     data = candidates_view._load_data()
@@ -121,7 +112,6 @@ def _render_ask_box() -> None:
         _render_ask_results(active)
 
 
-# ------------------------------------------------------------ الأقسام
 
 def _render_quick_actions() -> None:
     st.markdown("#### ⚡ ابدأ من هنا")
@@ -137,7 +127,6 @@ def _render_quick_actions() -> None:
 
 
 def _render_onboarding() -> None:
-    """ترحيب لمساحة عمل فارغة. الحالة مشتقة من البيانات نفسها (لا مرشحين ولا وظائف) فلا نخزّن شيئاً."""
     with st.container(border=True):
         st.markdown("### 👋 مرحباً بك في SmartATS AI")
         st.write("ابنِ مسار التوظيف الخاص بك في 3 خطوات:")
@@ -158,7 +147,6 @@ def _render_onboarding() -> None:
         )
 
 def _render_setup_checklist(setup: dict[str, bool]) -> None:
-    """قائمة إعداد لمن بدأ ولم يُكمل: تُظهر الخطوات المنجزة وزراً رئيسياً واحداً للخطوة التالية."""
     steps = [
         ("candidates", "أضف مرشحين", "upload_cv", {}, "📄 رفع سيرة ذاتية"),
         ("jobs", "أنشئ وظيفة", "jobs", {OPEN_CREATE_JOB: True}, "➕ إنشاء وظيفة"),
@@ -209,7 +197,6 @@ def _render_attention(items: list[AttentionItem]) -> None:
             )
 
 
-# ------------------------------------------------------------ الصفحة
 def render() -> None:
     jobs_ui.inject_css()
     user = st.session_state.get("user") or {}

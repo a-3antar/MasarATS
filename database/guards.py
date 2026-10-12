@@ -1,4 +1,3 @@
-"""شبكة أمان على مستوى قاعدة البيانات: تمنع الكتابة عن القراءة-فقط وتحدّ الحذف الكمي لغير الأدمن."""
 
 from sqlalchemy import event
 
@@ -7,7 +6,7 @@ from core.constants import BULK_DELETE_LIMIT
 from core.exceptions import PermissionDeniedError
 from core.permissions import can_bulk, can_modify
 
-_ACCOUNT_TABLE = "users"  # المستخدم يغيّر كلمة مروره/آخر دخول حتى لو Viewer
+_ACCOUNT_TABLE = "users"
 
 
 def _has_real_changes(session) -> bool:
@@ -21,7 +20,7 @@ def _only_account_changes(session) -> bool:
 
 def _check_flush(session, flush_context, instances) -> None:
     role = get_current_role()
-    if role is None:  # عملية نظام (خلفية/سكربت/قبل الدخول)
+    if role is None:
         return
     if not can_modify(role):
         if _has_real_changes(session) and not _only_account_changes(session):

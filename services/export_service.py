@@ -1,4 +1,3 @@
-"""خدمة التصدير: تحويل المرشحين والوظائف إلى ملفات CSV / Excel (مسطح) / Excel منظّم (فهرس + صفحة لكل مرشح)."""
 
 import io
 import re
@@ -26,21 +25,17 @@ def _education_text(items: list[dict] | None) -> str:
 
 
 def _date_text(value) -> str:
-    # نحوّل التاريخ لنص لأن openpyxl لا يقبل datetime يحمل timezone
     return value.strftime("%Y-%m-%d %H:%M") if value else ""
 
 
-# ==================================================================================
-# تصدير Excel منظّم (فهرس + صفحة مستقلة لكل مرشح) - ثوابت التصميم (بلا أرقام سحرية)
-# ==================================================================================
 
-_ORG_COLOR_HEADER_BG = "1F4E78"     # خلفية عناوين الصفحات الرئيسية (فهرس / ترويسة صفحة المرشح)
-_ORG_COLOR_SECTION_BG = "5B9BD5"    # خلفية رأس القسم ورأس جدول الفهرس
-_ORG_COLOR_SUBTITLE_BG = "EAF2F8"   # خلفية السطر التوضيحي وسطر «العودة إلى الفهرس»
-_ORG_COLOR_FIELD_BG = "F3F6F9"      # خلفية خلية اسم الحقل
-_ORG_COLOR_TOTAL_BG = "EAF2F8"      # خلفية سطر «إجمالي المرشحين»
-_ORG_COLOR_LINK = "0563C1"          # لون روابط HYPERLINK
-_ORG_COLOR_FIELD_TEXT = "1F1F1F"    # لون نص اسم الحقل والسطر التوضيحي
+_ORG_COLOR_HEADER_BG = "1F4E78"
+_ORG_COLOR_SECTION_BG = "5B9BD5"
+_ORG_COLOR_SUBTITLE_BG = "EAF2F8"
+_ORG_COLOR_FIELD_BG = "F3F6F9"
+_ORG_COLOR_TOTAL_BG = "EAF2F8"
+_ORG_COLOR_LINK = "0563C1"
+_ORG_COLOR_FIELD_TEXT = "1F1F1F"
 _ORG_COLOR_WHITE = "FFFFFF"
 _ORG_COLOR_TOTAL_TEXT = "1F4E78"
 
@@ -55,8 +50,6 @@ _ORG_INDEX_COL_WIDTHS = {"A": 20, "B": 34, "C": 42}
 _ORG_PROFILE_COL_WIDTHS = {"A": 28, "B": 78}
 _ORG_PROFILE_TITLE_ROW_HEIGHT = 26
 
-# تعريف الأقسام والحقول مرة واحدة: (عنوان القسم، [(التسمية العربية، دالة استخراج القيمة من Candidate)]).
-# إضافة حقل جديد لصفحة المرشح المنظّمة = سطر واحد هنا فقط.
 _ORG_PROFILE_SECTIONS: list[tuple[str, list[tuple[str, "callable"]]]] = [
     (
         "البيانات الأساسية",
@@ -112,7 +105,6 @@ _ORG_PROFILE_SECTIONS: list[tuple[str, list[tuple[str, "callable"]]]] = [
 
 
 def _org_display_value(value):
-    """يحوّل قيمة الحقل إلى ما يُكتب في الخلية: الأرقام تبقى أرقاماً، والباقي نص أو "—" إن كان فارغاً."""
     if isinstance(value, bool):
         return _ORG_EMPTY_DISPLAY
     if isinstance(value, (int, float)):
@@ -122,12 +114,10 @@ def _org_display_value(value):
 
 
 def _org_is_formula_injection_risk(value) -> bool:
-    """نص قد يُفسَّر كصيغة في Excel إن فُتح مباشرة (يبدأ بـ = أو + أو - أو @)."""
     return isinstance(value, str) and value.startswith(("=", "+", "-", "@"))
 
 
 def _org_safe_text_cell(cell, value) -> None:
-    """يكتب قيمة في خلية مع تحييد أي حقن صيغ (اسم/مسمى/ملخص... قادم من السيرة الذاتية)."""
     if _org_is_formula_injection_risk(value):
         cell.value = "'" + value
         cell.data_type = "s"
@@ -136,7 +126,6 @@ def _org_safe_text_cell(cell, value) -> None:
 
 
 def _org_sanitize_sheet_name(raw_name: str, used_names: set[str]) -> str:
-    """يبني اسم صفحة صالحاً (≤31 حرفاً، بلا رموز محظورة)، ويضيف لاحقة رقمية عند التكرار."""
     cleaned = _ORG_INVALID_SHEET_CHARS_RE.sub("-", raw_name or "").strip() or "Candidate"
     cleaned = cleaned[:_ORG_MAX_SHEET_NAME_LEN]
 
@@ -151,12 +140,10 @@ def _org_sanitize_sheet_name(raw_name: str, used_names: set[str]) -> str:
 
 
 def _org_escape_sheet_name_for_formula(sheet_name: str) -> str:
-    """يضاعف علامة ' داخل اسم الصفحة قبل استخدامه داخل صيغة HYPERLINK."""
     return sheet_name.replace("'", "''")
 
 
 def _org_escape_display_text_for_formula(text: str) -> str:
-    """يضاعف علامة \" داخل النص المعروض قبل وضعه داخل وسيطة نصية لصيغة HYPERLINK."""
     return (text or "").replace('"', '""')
 
 
@@ -166,7 +153,6 @@ def _org_set_column_widths(sheet, widths: dict[str, int]) -> None:
 
 
 def _org_draw_section_header(sheet, row: int, title: str) -> None:
-    """رأس قسم: خلية مدمجة A:B، خط أبيض عريض، خلفية زرقاء، محاذاة يمين مع wrap."""
     sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
     cell = sheet.cell(row=row, column=1, value=title)
     cell.font = Font(name="Calibri", bold=True, color=_ORG_COLOR_WHITE)
@@ -175,7 +161,6 @@ def _org_draw_section_header(sheet, row: int, title: str) -> None:
 
 
 def _org_draw_field_row(sheet, row: int, label: str, value) -> None:
-    """صف (الحقل | القيمة): خلية الحقل بخلفية فاتحة وخط عريض، وخلية القيمة بمحاذاة أعلى مع wrap."""
     label_cell = sheet.cell(row=row, column=1, value=label)
     label_cell.font = Font(name="Calibri", bold=True, color=_ORG_COLOR_FIELD_TEXT)
     label_cell.fill = PatternFill("solid", fgColor=_ORG_COLOR_FIELD_BG)
@@ -215,8 +200,7 @@ def _org_build_candidate_sheet(workbook: Workbook, candidate: Candidate, sheet_n
 
 
 def _org_build_index_sheet(workbook: Workbook, entries: list[tuple[str, Candidate]]) -> None:
-    """entries: [(اسم صفحة المرشح، Candidate)] بنفس ترتيب إنشاء صفحات المرشحين."""
-    sheet = workbook.create_sheet(_ORG_INDEX_SHEET_NAME, 0)  # في المقدمة مؤقتاً؛ يُعاد الترتيب النهائي لاحقاً
+    sheet = workbook.create_sheet(_ORG_INDEX_SHEET_NAME, 0)
     _org_set_column_widths(sheet, _ORG_INDEX_COL_WIDTHS)
 
     sheet.merge_cells("A1:C1")
@@ -264,8 +248,6 @@ def _org_build_index_sheet(workbook: Workbook, entries: list[tuple[str, Candidat
 
 
 def _org_write_flat_sheet(sheet, candidates: list[Candidate]) -> None:
-    """يعيد استخدام نفس أعمدة candidates_to_dataframe، لكن يكتبها مباشرة عبر openpyxl
-    مع تحييد أي نص قد يُفسَّر كصيغة (بيانات قادمة من سيرة ذاتية حرة النص)."""
     df = ExportService.candidates_to_dataframe(candidates)
     sheet.append(list(df.columns))
     for _, row_values in df.iterrows():
@@ -286,7 +268,6 @@ def _org_write_flat_sheet(sheet, candidates: list[Candidate]) -> None:
 
 
 class ExportService:
-    """يبني DataFrame من الكائنات ثم يحوّله إلى bytes جاهزة لزر التنزيل."""
 
     @staticmethod
     def candidates_to_dataframe(candidates: list[Candidate]) -> pd.DataFrame:
@@ -360,7 +341,6 @@ class ExportService:
 
     @staticmethod
     def to_csv_bytes(df: pd.DataFrame) -> bytes:
-        # utf-8-sig (BOM) ليفتح Excel النص العربي بشكل صحيح
         return df.to_csv(index=False).encode("utf-8-sig")
 
     @staticmethod
@@ -379,13 +359,8 @@ class ExportService:
     def candidates_to_organized_workbook_bytes(
         candidates: list[Candidate], include_flat_sheet: bool = True
     ) -> bytes:
-        """
-        يبني ملف Excel منظَّم: صفحة "Candidates" مسطحة (اختيارية) + "الفهرس" + صفحة مستقلة لكل مرشح
-        (اسمها كود المرشح)، مطابق في التصميم لملف candidates_organized.xlsx النموذجي.
-        لا تصل هذه الدالة لقاعدة البيانات ولا تستدعي Streamlit - تستقبل كائنات Candidate جاهزة فقط.
-        """
         workbook = Workbook()
-        workbook.remove(workbook.active)  # الصفحة الافتراضية الفارغة
+        workbook.remove(workbook.active)
 
         if include_flat_sheet:
             flat_sheet = workbook.create_sheet(_ORG_FLAT_SHEET_NAME)
@@ -398,12 +373,11 @@ class ExportService:
             sheet_name = _org_sanitize_sheet_name(base_name, used_sheet_names)
             entries.append((sheet_name, candidate))
 
-        _org_build_index_sheet(workbook, entries)  # يُنشأ مؤقتاً في المقدمة (index=0)
+        _org_build_index_sheet(workbook, entries)
 
         for sheet_name, candidate in entries:
             _org_build_candidate_sheet(workbook, candidate, sheet_name)
 
-        # إعادة ترتيب الصفحات النهائي: Candidates (إن وُجدت) ثم الفهرس ثم صفحة لكل مرشح بالترتيب
         desired_order = ([_ORG_FLAT_SHEET_NAME] if include_flat_sheet else []) + [_ORG_INDEX_SHEET_NAME] + [
             name for name, _ in entries
         ]

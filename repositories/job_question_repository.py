@@ -1,4 +1,3 @@
-"""مستودع أسئلة الوظيفة (بنك أسئلة مشترك بين كل المرشحين المتقدمين لنفس الوظيفة)."""
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session

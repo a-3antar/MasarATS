@@ -1,4 +1,3 @@
-"""إدارة المستخدمين (للأدمن): الدور، التفعيل، الصفحات المسموحة، إعادة تعيين كلمة المرور، وإنشاء مستخدم."""
 
 import pandas as pd
 import streamlit as st
@@ -15,7 +14,6 @@ _ROLE_LABELS = {
     UserRole.VIEWER.value: "قراءة فقط",
 }
 _ROLES = list(_ROLE_LABELS)
-# الصفحات القابلة للتخصيص (صفحتا «حسابي» و«المستخدمون» لهما قواعد ثابتة)
 _CONFIGURABLE = {label: key for label, key in PAGES.items() if key not in ("account", "users")}
 _LABEL_BY_KEY = {key: label for label, key in _CONFIGURABLE.items()}
 

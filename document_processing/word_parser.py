@@ -1,4 +1,3 @@
-"""استخلاص النص والصورة من ملفات Word (.docx) باستخدام python-docx."""
 
 import io
 
@@ -10,7 +9,6 @@ logger = get_logger(__name__)
 
 
 class WordParser(DocumentParser):
-    """يستخلص النص من ملفات .docx (الفقرات والجداول)."""
 
     def extract_text(self, file_path: str) -> str:
         try:
@@ -38,7 +36,6 @@ class WordParser(DocumentParser):
             raise DocumentParsingError(f"فشل تحليل ملف Word: {exc}") from exc
 
     def extract_photo(self, file_path: str) -> tuple[bytes, str] | None:
-        """يبحث عن أنسب صورة شخصية في متن الملف وفي الـ header (كثير من القوالب تضعها هناك)."""
         try:
             import docx
             from PIL import Image

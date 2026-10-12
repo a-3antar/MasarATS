@@ -1,11 +1,9 @@
-"""قراءة ملفات .txt مباشرة."""
 
 from core.exceptions import DocumentParsingError
 from document_processing.base import DocumentParser
 
 
 class TextParser(DocumentParser):
-    """يقرأ ملفات نصية عادية (.txt)."""
 
     def extract_text(self, file_path: str) -> str:
         try:

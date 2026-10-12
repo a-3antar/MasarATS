@@ -1,8 +1,3 @@
-"""
-Factory لاختيار محلّل المستند المناسب حسب امتداد الملف.
-بقية التطبيق يستدعي فقط `DocumentParserFactory.get_parser(...)` ولا يعرف
-أي شيء عن PyMuPDF أو python-docx تحديداً - يسهّل إضافة صيغ جديدة لاحقاً.
-"""
 
 from pathlib import Path
 
@@ -15,7 +10,6 @@ from document_processing.pptx_parser import PowerPointParser
 
 
 class DocumentParserFactory:
-    """يُرجع محلّل المستند المناسب بناءً على امتداد الملف."""
 
     _parsers: dict[str, type[DocumentParser]] = {
         ".pdf": PDFParser,

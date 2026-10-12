@@ -1,8 +1,3 @@
-"""صفحة المقابلات كـ Interview Workspace بتصميم منظّم في ثلاثة تبويبات:
-🎙️ المقابلة (ترويسة + بطاقة المرشح + مساحة السؤال + التقييم النهائي)،
-📝 أسئلة المقابلة (تخص هذه المقابلة فقط: يدوية أو بالذكاء الاصطناعي أو مستوردة اختيارياً من مقابلة أخرى)،
-⚙️ إدارة المقابلة (تعديل/تصدير/استيراد/حذف).
-كل مقابلة = مرشح + وظيفة + تاريخ، ولها أسئلتها وإجاباتها. القرار النهائي بشري فقط."""
 
 import html
 from datetime import datetime, timezone
@@ -85,7 +80,6 @@ def _inject_css() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
 
 
-# ------------------------------------------------------------ مكوّنات عرض صغيرة
 
 def _journey_html(status: str) -> str:
     if status == "Rejected":
@@ -117,10 +111,8 @@ def _show_flash() -> None:
         getattr(st, level)(message)
 
 
-# ------------------------------------------------------------ تنبيه تكرار المقابلة
 
 def _render_repeat_notice(previous: list[dict], current: bool) -> None:
-    """تنبيه: سبقت مقابلة هذا المرشح لنفس الوظيفة (مقابلة أخرى بعد مدة)."""
     if not previous:
         return
     last = previous[0]
@@ -144,7 +136,6 @@ def _render_repeat_notice(previous: list[dict], current: bool) -> None:
         )
 
 
-# ------------------------------------------------------------ تبويب: أسئلة المقابلة
 
 def _render_bank_question_row(q) -> None:
     with st.container(border=True):
@@ -192,7 +183,6 @@ def _render_add_question_form(interview_id: int) -> None:
 
 
 def _render_import_and_compare(interview) -> None:
-    """استيراد اختياري لأسئلة مقابلة أخرى (نص فقط) + مقارنة الدرجات على الأسئلة المتطابقة."""
     with get_db_session() as session:
         others = QuestionBankService(session).importable_interviews(interview.id)
 
@@ -233,7 +223,6 @@ def _render_import_and_compare(interview) -> None:
 
 
 def _render_question_tools(interview, job, candidate) -> None:
-    """توليد بالذكاء الاصطناعي، استيراد/مقارنة اختياريان، وأوزان الكفاءات (على مستوى الوظيفة)."""
     if st.button(
         "🤖 توليد أسئلة بالذكاء الاصطناعي (من سيرة هذا المرشح ومتطلبات الوظيفة)", key=f"gen_ai_{interview.id}"
     ):
@@ -262,7 +251,6 @@ def _render_question_tools(interview, job, candidate) -> None:
 
 
 def _render_question_bank(interview, job, candidate, questions: list) -> None:
-    """تبويب أسئلة هذه المقابلة فقط."""
     when = interview.scheduled_at.strftime("%Y-%m-%d") if interview.scheduled_at else "-"
     st.caption(f"أسئلة مقابلة {candidate.full_name} لوظيفة {job.title} بتاريخ {when}. لا تظهر في أي مقابلة أخرى.")
     if not questions:
@@ -274,7 +262,6 @@ def _render_question_bank(interview, job, candidate, questions: list) -> None:
     _render_question_tools(interview, job, candidate)
 
 
-# ------------------------------------------------------------ ترويسة المقابلة
 
 def _header_fields(key: str, interview=None) -> dict:
     col1, col2 = st.columns(2)
@@ -318,7 +305,6 @@ def _header_fields(key: str, interview=None) -> dict:
 
 
 def _render_new_interview(application_id: int, job) -> None:
-    """نموذج جدولة مختصر: النوع والموعد والمُقابِل والمكان فقط (الحالة تُضبط تلقائياً «مجدولة»)."""
     st.markdown('<div class="ats-section-title">🗓️ جدولة مقابلة</div>', unsafe_allow_html=True)
 
     with get_db_session() as session:
@@ -363,7 +349,6 @@ def _render_new_interview(application_id: int, job) -> None:
 
 
 def _render_header(interview, job, candidate) -> None:
-    """شريط ترويسة المقابلة: بيانات أساسية + شارة الحالة + أزرار البدء والإنهاء."""
     when = interview.scheduled_at.strftime("%Y-%m-%d %H:%M") if interview.scheduled_at else "-"
     cells = [
         ("المرشح / الوظيفة", f"{candidate.full_name} — {job.title}"),
@@ -401,7 +386,6 @@ def _render_header(interview, job, candidate) -> None:
                 run_action(lambda s: InterviewService(s).update(interview.id, status="Completed"))
 
 
-# ------------------------------------------------------------ بطاقة المرشح (العمود الأيسر)
 
 def _render_candidate_panel(interview, candidate, app_status: str, score, history: list[dict]) -> None:
     st.markdown('<div class="ats-section-title">👤 بيانات المرشح</div>', unsafe_allow_html=True)
@@ -442,7 +426,6 @@ def _render_candidate_panel(interview, candidate, app_status: str, score, histor
         candidate_profile.render_profile(candidate.id)
 
 
-# ------------------------------------------------------------ مساحة السؤال (العمود الأيمن)
 
 def _step(key: str, delta: int, last: int) -> None:
     st.session_state[key] = min(max(st.session_state.get(key, 0) + delta, 0), last)
@@ -572,7 +555,7 @@ def _render_question_workspace(interview, job, question, answer, index: int, tot
                 def analyze(session) -> None:
                     service = InterviewService(session)
                     service.save_answer(iid, qid, answer_text)
-                    session.flush()  # لتظهر الإجابة المحفوظة للتو ضمن السياق المرجعي
+                    session.flush()
                     service.evaluate_answer(iid, qid, job)
                 run_action(analyze, "تم التحليل ✅")
 
@@ -580,7 +563,6 @@ def _render_question_workspace(interview, job, question, answer, index: int, tot
     _render_interviewer_review(iid, qid, answer)
 
 
-# ------------------------------------------------------------ الكفاءات والتقييم النهائي
 
 def _render_evaluation(interview, job) -> None:
     with get_db_session() as session:
@@ -646,13 +628,11 @@ def _render_evaluation(interview, job) -> None:
         if saved:
             def save_final(session) -> None:
                 service = InterviewService(session)
-                # إن لم تتغير الدرجة نحدّث الملاحظات فقط فلا تُوسَم الدرجة المحسوبة بأنها يدوية
                 service.set_overall(interview.id, new_score if new_score != current else None, notes, decision)
                 service.update(interview.id, notes=interviewer_notes.strip() or None)
             run_action(save_final, "تم حفظ التقييم النهائي ✅")
 
 
-# ------------------------------------------------------------ تبويب الإدارة: تعديل / تصدير / استيراد / حذف
 
 def _render_edit_interview(interview) -> None:
     with st.container(border=True):
@@ -687,7 +667,6 @@ def _render_export_questions(interview, job, candidate, questions: list) -> None
 
 
 def _render_import_answers(interview, job) -> None:
-    """يرفع ملف Word المعبّأ، يحفظ الإجابات، يقيّمها بالذكاء الاصطناعي، ثم يحسب الدرجة النهائية."""
     with st.container(border=True):
         st.markdown("**📥 استيراد الإجابات من ملف Word**")
         st.caption(
@@ -717,7 +696,6 @@ def _render_import_answers(interview, job) -> None:
             st.error(str(exc))
             return
 
-        # أي widget له key محفوظ في session_state يتجاهل value= الجديد، فنحذف مفاتيح الأسئلة المستوردة
         for question_id in answers:
             for suffix in ("", "_c", "_o", "_r"):
                 st.session_state.pop(f"ans_{interview.id}_{question_id}{suffix}", None)
@@ -744,7 +722,6 @@ def _render_manage_tab(interview, job, candidate, questions: list) -> None:
         _render_import_answers(interview, job)
 
 
-# ------------------------------------------------------------ مساحة العمل الرئيسية
 
 def _render_interview_tab(
     interview, job, candidate, app_status: str, score, questions, answers, history, previous
@@ -789,10 +766,8 @@ def _render_workspace(interview, job, candidate, app_status: str, score) -> None
         _render_manage_tab(interview, job, candidate, questions)
 
 
-# ------------------------------------------------------------ الصفحة الرئيسية
 
 def _render_next_step(interview) -> None:
-    """الخطوة التالية بعد المقابلة (اقتراح فقط؛ القرار النهائي يسجّله المُقابِل بنفسه)."""
     if interview.status != "Completed":
         return
     with st.container(border=True):
@@ -833,7 +808,7 @@ def render() -> None:
         with col_job:
             job_labels = {f"{j.title} (#{j.id})": j.id for j in jobs}
             if st.session_state.get("iv_job_select") not in job_labels:
-                st.session_state.pop("iv_job_select", None)  # قيمة قادمة من صفحة أخرى لم تعد صالحة
+                st.session_state.pop("iv_job_select", None)
             job_id = job_labels[st.selectbox("💼 الوظيفة", list(job_labels), key="iv_job_select")]
 
         with get_db_session() as session:

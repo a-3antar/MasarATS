@@ -1,6 +1,3 @@
-"""أفضل المرشحين داخل صفحة الوظيفة: ملخص + بطاقات مع شرح الدرجة + إجراءات مباشرة.
-لا منطق مطابقة هنا: القراءة من جدول applications (نتائج MatchingService المحفوظة)،
-والحساب يتم فقط عند ضغط زر «بحث» عبر MatchingService نفسه."""
 
 import html
 
@@ -36,7 +33,6 @@ _BREAKDOWN_LABELS = {
 
 @st.cache_data(ttl=_TTL, show_spinner=False)
 def _load(job_id: int) -> list[dict]:
-    """التقديمات المحفوظة لوظيفة (مرتبة حسب الدرجة) كقواميس بسيطة قابلة للتخزين في الكاش."""
     stmt = (
         select(Application, Candidate)
         .join(Candidate, Candidate.id == Application.candidate_id)
@@ -62,12 +58,10 @@ def _load(job_id: int) -> list[dict]:
 
 
 def clear_cache() -> None:
-    """يمسح كاش هذه الصفحة فقط. يُستدعى من ui.helpers.invalidate_all (لا تستدعِ invalidate_all من هنا)."""
     _load.clear()
 
 
 def _shortlist(app_id: int) -> None:
-    """callback: نقل التقديم للقائمة المختصرة (قرار المسؤول، عبر ApplicationService)."""
     try:
         user = (st.session_state.get("user") or {}).get("full_name")
         with get_db_session() as session:
@@ -79,7 +73,6 @@ def _shortlist(app_id: int) -> None:
 
 
 def _run_matching(job_id: int) -> None:
-    """يشغّل المطابقة الحالية (MatchingService) لكل المرشحين ضد هذه الوظيفة ويحفظ النتائج."""
     try:
         with st.spinner("جاري البحث عن أفضل المرشحين..."):
             with get_db_session() as session:
@@ -105,7 +98,6 @@ def _render_summary(rows: list[dict]) -> None:
 
 
 def _render_explanation(r: dict) -> None:
-    """شرح الدرجة: لا تُعرض النسبة وحدها (التفصيل من نتيجة MatchingService المحفوظة)."""
     detail = r["detail"]
     breakdown = detail.get("breakdown") or {}
     for key, label in _BREAKDOWN_LABELS.items():
@@ -161,7 +153,6 @@ def _render_card(r: dict, job_id: int, job_title: str) -> None:
 
 
 def render_best_candidates(job_id: int, job_title: str) -> None:
-    """القسم الرئيسي في صفحة الوظيفة: الإجراء الأساسي = عرض/تحديث أفضل المرشحين."""
     st.markdown(f"### 🎯 أفضل المرشحين — {job_title}")
     rows = _load(job_id)
 

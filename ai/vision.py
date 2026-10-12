@@ -1,4 +1,3 @@
-"""قراءة نص صفحة صورية (سيرة ذاتية ممسوحة أو مصممة كصورة) عبر Gemini Vision (google-genai)."""
 
 import json
 
@@ -18,14 +17,12 @@ _TRANSCRIBE_PROMPT = (
 
 
 def _client():
-    """عميل genai مستقل لكل نداء - يستخدم المفتاح التالي في التبديل الدوري. آمن للتوازي."""
     from google import genai
 
     return genai.Client(api_key=get_next_key())
 
 
 def transcribe_image(image_bytes: bytes, mime_type: str = "image/png") -> str:
-    """يرسل صورة لـ Gemini ويرجع النص المكتوب فيها. يرفع AIServiceError برسالة مفهومة عند الفشل."""
     settings = get_settings()
     if not settings.gemini_api_key and not settings.alt_gemini_api_key:
         raise AIServiceError("قراءة الصفحات الصورية تحتاج GEMINI_API_KEY في ملف .env")
@@ -56,7 +53,6 @@ def transcribe_image(image_bytes: bytes, mime_type: str = "image/png") -> str:
 
 
 def _friendly_error(exc: Exception) -> str:
-    """يحوّل أخطاء Gemini التقنية إلى رسالة عربية مفهومة للمستخدم."""
     message = str(exc).lower()
     if "api key" in message or "api_key" in message or "permission" in message or "403" in message:
         return "مفتاح GEMINI_API_KEY غير صالح أو لا يملك صلاحية. تحقق منه في ملف .env."
@@ -70,10 +66,6 @@ def _friendly_error(exc: Exception) -> str:
 
 
 def detect_face_box(image_bytes: bytes, mime_type: str = "image/png") -> tuple[float, float, float, float] | None:
-    """
-    يطلب من Gemini صندوق وجه الشخص الأبرز في الصورة.
-    يرجع (x_min, y_min, x_max, y_max) كنسب من 0 إلى 1، أو None إن لم يوجد وجه أو فشل الطلب.
-    """
     settings = get_settings()
     if not settings.gemini_api_key and not settings.alt_gemini_api_key:
         return None

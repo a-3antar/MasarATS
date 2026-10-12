@@ -1,9 +1,3 @@
-"""
-سكربت لمسح كل المرشحين والتقديمات (applications) فقط، مع الإبقاء على حسابات
-المستخدمين والوظائف كما هي. شغّله مرة واحدة من جذر المشروع:
-
-    python reset_candidates.py
-"""
 
 from database.database import get_db_session
 from models.application import Application

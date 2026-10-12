@@ -1,4 +1,3 @@
-"""مستودع إجابات المقابلات (كل إجابة مرتبطة بمقابلة محددة، أي بمرشح محدد عبر التقديم)."""
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session

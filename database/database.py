@@ -1,8 +1,3 @@
-"""
-إعداد الاتصال بقاعدة البيانات باستخدام SQLAlchemy.
-مصمم بحيث يعمل مع SQLite الآن، وينتقل لـ PostgreSQL/SQL Server لاحقاً
-بمجرد تغيير DATABASE_URL في الإعدادات دون تغيير أي كود آخر.
-"""
 
 from contextlib import contextmanager
 from typing import Generator
@@ -18,12 +13,10 @@ logger = get_logger(__name__)
 
 
 class Base(DeclarativeBase):
-    """القاعدة المشتركة لكل نماذج SQLAlchemy (Models) في التطبيق."""
+    pass
 
 def _build_engine():
     settings = get_settings()
-    # connect_args خاص بـ SQLite: السماح بالوصول من عدة ثريدات + مهلة انتظار عند القفل
-    # بدل الفشل الفوري (ضروري الآن لأن رفع عدة سير ذاتية يُعالَج بالتوازي في عدة Threads).
     connect_args = (
         {"check_same_thread": False, "timeout": 30} if settings.database_url.startswith("sqlite") else {}
     )
@@ -34,7 +27,6 @@ def _build_engine():
 
         @event.listens_for(engine, "connect")
         def _set_sqlite_pragmas(dbapi_connection, _):
-            # WAL يسمح بقراءة/كتابة متزامنة أفضل من وضع SQLite الافتراضي (DELETE journal mode)
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA busy_timeout=30000")
@@ -43,19 +35,11 @@ def _build_engine():
     return engine
 
 engine = _build_engine()
-# expire_on_commit=False مهم هنا: صفحات Streamlit تقرأ خصائص الكائنات (مثل candidate.full_name)
-# بعد الخروج من كتلة `with get_db_session()` وإغلاق الجلسة. لو تُرك الإعداد الافتراضي (True)،
-# تنتهي صلاحية كل الخصائص عند الـ commit وتحتاج جلسة حية لإعادة تحميلها، فيظهر DetachedInstanceError.
-# هذا آمن هنا لأننا لا نُعدّل نفس الكائن عبر جلسة أخرى لاحقاً قبل إعادة قراءته من القاعدة.
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 register_session_guards(SessionLocal)
 
 def _add_missing_columns() -> None:
-    """
-    يضيف أي أعمدة جديدة في النماذج لجداول موجودة مسبقاً في القاعدة.
-    ضروري لأن create_all() ينشئ الجداول الناقصة فقط ولا يعدّل الجداول القائمة.
-    """
     inspector = inspect(engine)
     with engine.begin() as connection:
         for table in Base.metadata.sorted_tables:
@@ -82,12 +66,6 @@ def init_db() -> None:
 
 @contextmanager
 def get_db_session() -> Generator[Session, None, None]:
-    """
-    Context manager لجلسة قاعدة بيانات آمنة:
-    - commit تلقائي عند النجاح
-    - rollback تلقائي عند حدوث استثناء
-    - إغلاق الجلسة دائماً في النهاية
-    """
     session = SessionLocal()
     try:
         yield session

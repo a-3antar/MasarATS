@@ -9,3 +9,4 @@ exports/*
 venv/
 *.egg-info/
 .pytest_cache/
+/comments_store

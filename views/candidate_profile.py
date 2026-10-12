@@ -1,5 +1,3 @@
-"""بطاقة المرشح الموحّدة: ترويسة + أزرار سريعة + مؤشرات + تبويبات (نظرة عامة، خبرات، تفاصيل، وظائف، تعديل).
-render_drawer تُستخدم كلوحة جانبية في صفحة المرشحين، و render_profile للاستخدام داخل expander (رفع السير، المقابلات)."""
 
 import html
 
@@ -58,7 +56,6 @@ def _inject_css() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
 
 
-# ------------------------------------------------------------ أدوات صغيرة
 
 def _status_badge(status: str) -> str:
     return components.badge(status, _STATUS_COLORS.get(status, _DEFAULT_STATUS_COLOR))
@@ -74,7 +71,6 @@ def _kpi_html(items: list[tuple[str, str]]) -> str:
 
 
 def _positions_from_experience(candidate: Candidate) -> list[str]:
-    """المسميات السابقة من قائمة الخبرات (للسجلات القديمة التي لا تحمل previous_positions)."""
     positions: list[str] = []
     seen: set[str] = set()
     for item in candidate.experience or []:
@@ -86,7 +82,6 @@ def _positions_from_experience(candidate: Candidate) -> list[str]:
 
 
 def _value(candidate: Candidate, attr: str, lang: str):
-    """قيمة الحقل باللغة المطلوبة: الترجمة إن وُجدت، وإلا الأصل."""
     if lang == "ar":
         translated = ((candidate.translations or {}).get("ar") or {}).get(attr)
         if translated:
@@ -98,7 +93,6 @@ def _value(candidate: Candidate, attr: str, lang: str):
 
 
 def clear_related_caches() -> None:
-    """تُستدعى بعد أي تعديل على مرشح/وظيفة حتى لا تُعرض بيانات قديمة من الكاش."""
     clear_suitable_jobs_cache()
     try:
         from views import candidates as _candidates
@@ -109,7 +103,6 @@ def clear_related_caches() -> None:
 
 @st.cache_data(ttl=_SUITABLE_JOBS_CACHE_TTL, show_spinner=False)
 def _cached_suitable_jobs(candidate_id: int, open_only: bool) -> list[dict]:
-    """نتيجة مطابقة مرشح واحد ضد الوظائف - مخزّنة مؤقتاً حسب (candidate_id, open_only)."""
     from services.matching_service import MatchingService
 
     with get_db_session() as session:
@@ -125,7 +118,6 @@ def clear_suitable_jobs_cache() -> None:
     _cached_suitable_jobs.clear()
 
 
-# ------------------------------------------------------------ الترويسة والأزرار السريعة
 
 
 def _render_header(candidate: Candidate, photo_path, lang: str) -> None:
@@ -154,7 +146,6 @@ def _render_header(candidate: Candidate, photo_path, lang: str) -> None:
     if line:
         st.markdown(f'<div style="font-size:.85rem">{line}</div>', unsafe_allow_html=True)
 
-# المرحلة الحالية ← (نص الإجراء التالي، المرحلة الجديدة أو None، صفحة الانتقال أو None)
 _NEXT_ACTIONS: dict[str, tuple[str, str | None, str | None]] = {
     "New": ("بدء الفرز", "Screening", None),
     "Screening": ("إضافة للقائمة المختصرة", "Shortlisted", None),
@@ -164,8 +155,6 @@ _NEXT_ACTIONS: dict[str, tuple[str, str | None, str | None]] = {
 }
 
 def _render_actions(candidate: Candidate, summary: dict | None = None) -> None:
-    """منطقة القرار: المرحلة الحالية + الإجراء التالي المقترح (زر رئيسي واحد) + إجراءات ثانوية.
-    الذكاء الاصطناعي يقترح فقط؛ القرار للمسؤول."""
     cid = candidate.id
     status = candidate.status or "New"
     best = (summary or {}).get("best")
@@ -237,7 +226,6 @@ def _kpis(candidate: Candidate, summary: dict | None) -> list[tuple[str, str]]:
 
 
 def _choose_language(candidate: Candidate) -> str:
-    """اختيار لغة العرض؛ إن لم توجد ترجمة عربية يعرض زر الترجمة ويرجع الإنجليزية."""
     cid = candidate.id
     label = st.radio("🌐 لغة العرض", list(_LANG_OPTIONS), horizontal=True, key=f"lang_{cid}", label_visibility="collapsed")
     lang = _LANG_OPTIONS[label]
@@ -256,7 +244,6 @@ def _choose_language(candidate: Candidate) -> str:
     return lang
 
 
-# ------------------------------------------------------------ التبويبات
 
 def _render_overview(candidate: Candidate, lang: str) -> None:
     st.markdown('<div class="cp-title">📝 الملخص</div>', unsafe_allow_html=True)
@@ -281,7 +268,6 @@ def _render_overview(candidate: Candidate, lang: str) -> None:
         st.caption(_NOT_MENTIONED)
 
 def _render_experience(candidate: Candidate, lang: str, collapsible: bool) -> None:
-    """بطاقات خبرات؛ قابلة للطي في اللوحة الجانبية، وثابتة داخل expander (لا يجوز تداخل expanders)."""
     experience = _value(candidate, "experience", lang) or []
     if not experience:
         st.caption(_NOT_MENTIONED)
@@ -332,7 +318,6 @@ def _render_details(candidate: Candidate, lang: str) -> None:
 
 
 def _render_suitable_jobs(candidate_id: int) -> None:
-    """أفضل الوظائف لهذا المرشح مع شرح الدرجة (بدون expander لأن البطاقة قد تكون داخل expander)."""
     open_only = st.checkbox("الوظائف المفتوحة فقط", value=True, key=f"jobs_open_only_{candidate_id}")
     results = _cached_suitable_jobs(candidate_id, open_only)
 
@@ -362,12 +347,10 @@ def _render_suitable_jobs(candidate_id: int) -> None:
                 st.write(line)
 
 
-# ------------------------------------------------------------ تحليل الذكاء الاصطناعي
 
 def _render_ai_analysis(candidate_id: int) -> None:
     st.markdown("**🤖 تحليل الذكاء الاصطناعي**")
     polling = background_analysis.is_pending(candidate_id)
-    # التحديث الدوري يعمل فقط أثناء الانتظار، وعند الانتهاء نعيد تشغيل الصفحة لإيقافه
     st.fragment(_analysis_panel, run_every=_POLL_SECONDS if polling else None)(candidate_id, polling)
 
 
@@ -383,7 +366,7 @@ def _analysis_panel(candidate_id: int, polling: bool) -> None:
 
     analysis = candidate.ai_analysis or {}
     status, error = candidate.analysis_status, candidate.analysis_error
-    if status == "pending" and not in_memory:  # بقيت pending بعد إعادة تشغيل التطبيق
+    if status == "pending" and not in_memory:
         status, error = "failed", "انقطعت المعالجة قبل اكتمالها. أعد التحليل."
 
     if in_memory:
@@ -424,7 +407,6 @@ def _analysis_panel(candidate_id: int, polling: bool) -> None:
         st.caption(f" {meta.get('created_at', '')[:16]}")
 
 
-# ------------------------------------------------------------ تعديل
 
 def _render_edit_form(candidate: Candidate, photo_path) -> None:
     cid = candidate.id
@@ -513,20 +495,14 @@ def _render_edit_form(candidate: Candidate, photo_path) -> None:
                 service.remove_photo(cid)
             elif new_photo is not None:
                 service.set_photo(cid, new_photo.getvalue())
-        clear_related_caches()  # بيانات المرشح تغيّرت - أي كاش له أصبح قديماً
+        clear_related_caches()
         st.toast("تم حفظ التعديلات ✅")
         st.rerun()
     except SmartATSError as exc:
         st.error(str(exc))
 
 
-# ------------------------------------------------------------ نقاط الدخول
 def render_drawer(candidate_id: int, summary: dict | None = None, *, embedded: bool = False) -> None:
-    """
-    بطاقة المرشح: ترويسة ← منطقة القرار (المرحلة + الإجراء التالي) ← مؤشرات ← تبويبات.
-    embedded=True: للاستخدام داخل expander (لا منطقة قرار، ولا expanders متداخلة).
-    summary: {"best": أفضل مطابقة، "apps": عدد التقديمات} (اختياري).
-    """
     with get_db_session() as session:
         service = CandidateService(session)
         candidate = service.get_by_id(candidate_id)
@@ -560,5 +536,4 @@ def render_drawer(candidate_id: int, summary: dict | None = None, *, embedded: b
         _render_edit_form(candidate, photo_path)
 
 def render_profile(candidate_id: int) -> None:
-    """واجهة قديمة تستخدمها صفحتا رفع السير والمقابلات (داخل expander)."""
     render_drawer(candidate_id, embedded=True)

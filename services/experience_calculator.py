@@ -1,4 +1,3 @@
-"""حساب إجمالي سنوات الخبرة من تواريخ الوظائف (بدل الاعتماد على رقم مكتوب في السيرة)."""
 
 import re
 from datetime import date
@@ -16,7 +15,7 @@ _MONTHS = {
 _YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 _DMY_RE = re.compile(r"(?<!\d)(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*((?:19|20)\d{2})")
 _MY_RE = re.compile(r"(?<!\d)(\d{1,2})\s*[/.\-]\s*((?:19|20)\d{2})")
-_UNPARSABLE_KEY = (-1, -1)  # وظيفة بلا أي تاريخ مفهوم: تُوضع في آخر القائمة
+_UNPARSABLE_KEY = (-1, -1)
 
 
 def _month_index(today: date) -> int:
@@ -24,7 +23,6 @@ def _month_index(today: date) -> int:
 
 
 def _to_month_index(value: str | None, is_end: bool, today: date) -> int | None:
-    """يحوّل تاريخاً (14/2/2012 يوم/شهر/سنة، 05/2025، May 2025، 2025، Present) إلى رقم شهر تسلسلي."""
     if not value:
         return None
     text = value.strip().lower()
@@ -46,12 +44,11 @@ def _to_month_index(value: str | None, is_end: bool, today: date) -> int | None:
     if year is None:
         return None
     if month is None:
-        month = 12 if is_end else 1  # سنة فقط: البداية يناير والنهاية ديسمبر
+        month = 12 if is_end else 1
     return year * 12 + month - 1
 
 
 def _bounds(item: ExperienceItem, today: date) -> tuple[int | None, int | None]:
-    """(بداية، نهاية) كأرقام أشهر. النهاية الفارغة تعني وظيفة حالية إن وُجدت بداية."""
     start = _to_month_index(item.start_date, False, today)
     end = _to_month_index(item.end_date, True, today)
     if end is None and start is not None:
@@ -62,7 +59,6 @@ def _bounds(item: ExperienceItem, today: date) -> tuple[int | None, int | None]:
 def sort_experience_newest_first(
     experience: list[ExperienceItem], today: date | None = None
 ) -> list[ExperienceItem]:
-    """يرتّب الوظائف من الأحدث إلى الأقدم (حسب تاريخ النهاية ثم البداية). الوظائف بلا تواريخ تذهب للآخر."""
     today = today or date.today()
 
     def key(item: ExperienceItem) -> tuple[int, int]:
@@ -76,12 +72,8 @@ def sort_experience_newest_first(
 
 
 def estimate_total_years(experience: list[ExperienceItem], today: date | None = None) -> float | None:
-    """
-    إجمالي سنوات الخبرة بدون احتساب الفترات المتداخلة مرتين. None إن تعذّر الحساب.
-    وظيفة بلا تاريخ بداية (خطأ مطبعي مثل 2102) تبدأ من نهاية الوظيفة الأقدم منها مباشرة.
-    """
     today = today or date.today()
-    ordered = sort_experience_newest_first(experience, today)  # الأحدث أولاً
+    ordered = sort_experience_newest_first(experience, today)
     bounds = [_bounds(item, today) for item in ordered]
 
     intervals: list[tuple[int, int]] = []
@@ -89,7 +81,6 @@ def estimate_total_years(experience: list[ExperienceItem], today: date | None = 
         if end is None:
             continue
         if start is None:
-            # نهاية أقرب وظيفة أقدم (التالية في القائمة) لها نهاية مفهومة
             start = next((older_end for _, older_end in bounds[index + 1:] if older_end is not None), None)
             if start is None:
                 continue

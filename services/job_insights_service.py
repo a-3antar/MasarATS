@@ -1,5 +1,3 @@
-"""إحصاءات صفحة الوظائف: مؤشرات، قمع، توزيع المطابقة، وتحليل مهارات وظيفة واحدة.
-كله بكود ثابت وقابل للتفسير (بدون استدعاء Gemini). ترجع dataclasses بسيطة قابلة للتخزين في كاش Streamlit."""
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -33,7 +31,6 @@ _DAYS_PER_WEEK = 7
 
 @dataclass(frozen=True)
 class JobStats:
-    """أرقام قمع وظيفة واحدة (المتقدمون = المرشحون المطابَقون فعلاً)."""
 
     applicants: int = 0
     qualified: int = 0
@@ -61,7 +58,6 @@ class JobInsight:
 
 
 def _naive_utc(value: datetime) -> datetime:
-    """SQLite يعيد التاريخ بدون tzinfo؛ نوحّد المقارنة على UTC بدون tzinfo."""
     return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
 
 
@@ -69,7 +65,6 @@ class JobInsightsService:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    # ------------------------------------------------------------ المؤشرات العامة
 
     def kpis(self) -> dict:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -105,10 +100,8 @@ class JobInsightsService:
             "jobs_needing_candidates": len(ReportService(self._session).jobs_needing_candidates()),
         }
 
-    # ------------------------------------------------------------ إحصاءات لكل وظيفة
 
     def stats_by_job(self) -> dict[int, JobStats]:
-        """استعلامان مجمّعان لكل الوظائف دفعة واحدة (بدون N+1)."""
         score = Application.match_score
         score_rows = self._session.execute(
             select(
@@ -145,7 +138,6 @@ class JobInsightsService:
             )
         return result
 
-    # ------------------------------------------------------------ تحليل وظيفة واحدة
 
     def job_insight(self, job_id: int) -> JobInsight:
         job = self._session.get(Job, job_id)
@@ -160,7 +152,6 @@ class JobInsightsService:
         return JobInsight(stats=stats, top_skills=top, gap_skills=gaps, quick=self._quick_insights(stats, gaps))
 
     def _skill_coverage(self, job: Job) -> dict[str, float]:
-        """نسبة المرشحين الذين توثّق سيرهم كل مهارة مطلوبة (بين المؤهلين إن وُجدوا، وإلا كل المطابَقين)."""
         required = job.all_required_skills
         if not required:
             return {}

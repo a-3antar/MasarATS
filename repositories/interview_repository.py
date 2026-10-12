@@ -1,4 +1,3 @@
-"""مستودع المقابلات: استعلامات خاصة بجدول interviews."""
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -23,7 +22,6 @@ class InterviewRepository(BaseRepository[Interview]):
         return list(self._session.scalars(stmt).all())
 
     def list_for_candidate(self, candidate_id: int) -> list[tuple[Interview, Job]]:
-        """كل مقابلات مرشح (عبر كل وظائفه) مع الوظيفة، الأحدث أولاً - لعرض سجل المقابلات السابقة."""
         stmt = (
             select(Interview, Job)
             .join(Application, Application.id == Interview.application_id)
@@ -34,7 +32,6 @@ class InterviewRepository(BaseRepository[Interview]):
         return [(row[0], row[1]) for row in self._session.execute(stmt).all()]
 
     def list_all_with_context(self) -> list[tuple[Interview, Candidate, Job]]:
-        """كل المقابلات مع المرشح والوظيفة المرتبطين بها (لعرض التقويم الموحّد)."""
         stmt = (
             select(Interview, Candidate, Job)
             .join(Application, Application.id == Interview.application_id)

@@ -1,8 +1,3 @@
-"""
-كشف المرشحين المكررين.
-تطابق قوي (يمنع الحفظ): البريد الإلكتروني، الهاتف، رابط LinkedIn.
-تطابق ضعيف (تنبيه فقط): تشابه الاسم.
-"""
 
 import re
 import unicodedata
@@ -29,7 +24,6 @@ def normalize_email(value: str | None) -> str | None:
 
 
 def normalize_phone(value: str | None) -> str | None:
-    """يحوّل الرقم لأرقام إنجليزية فقط ويقارن بآخر 10 خانات (يتجاهل +20 و 0020 و 0 البادئة)."""
     digits = "".join(
         str(unicodedata.digit(ch)) for ch in (value or "") if ch.isdigit()
     )
@@ -39,18 +33,16 @@ def normalize_phone(value: str | None) -> str | None:
 
 
 def normalize_linkedin(value: str | None) -> str | None:
-    """يستخرج معرّف الحساب (slug) من رابط LinkedIn بغض النظر عن www أو https أو الشرطة الأخيرة."""
     match = _LINKEDIN_RE.search(value or "")
     return match.group(1).lower() if match else None
 
 
 def normalize_name(value: str | None) -> str | None:
-    """اسم مطبّع: حروف صغيرة، بدون تشكيل/تطويل، توحيد الألف والتاء المربوطة، وكلمات مرتبة أبجدياً."""
     text = unicodedata.normalize("NFKD", (value or "").lower())
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     text = _TATWEEL_RE.sub("", text).translate(_ARABIC_LETTER_MAP)
     tokens = re.findall(r"[^\W\d_]+", text)
-    if len(tokens) < 2:  # اسم من كلمة واحدة لا يصلح للمقارنة (كثير من الأشخاص باسم "Ahmed")
+    if len(tokens) < 2:
         return None
     return " ".join(sorted(tokens))
 
@@ -79,7 +71,6 @@ class DuplicateDetector:
         linkedin_url: str | None,
         exclude_id: int | None = None,
     ) -> list[DuplicateMatch]:
-        """يرجع كل المرشحين المحتمل تكرارهم، القوي منهم أولاً."""
         email_key = normalize_email(email)
         phone_key = normalize_phone(phone)
         linkedin_key = normalize_linkedin(linkedin_url)

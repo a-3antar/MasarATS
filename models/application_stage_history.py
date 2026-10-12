@@ -1,4 +1,3 @@
-"""سجل تغيير مراحل التقديم (جدول application_stage_history). كل انتقال بين مرحلتين = صف واحد لا يُعدَّل."""
 
 from datetime import datetime, timezone
 
@@ -13,7 +12,6 @@ def _utcnow() -> datetime:
 
 
 class ApplicationStageHistory(Base):
-    """انتقال تقديم من مرحلة إلى أخرى، مع من نفّذه ومتى. أساس تقرير وقت التعيين وخط الزمن."""
 
     __tablename__ = "application_stage_history"
 
@@ -24,7 +22,7 @@ class ApplicationStageHistory(Base):
     to_status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
 
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False, index=True)
-    changed_by: Mapped[str | None] = mapped_column(String(150), nullable=True)  # اسم المستخدم البشري
+    changed_by: Mapped[str | None] = mapped_column(String(150), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     def __repr__(self) -> str:
