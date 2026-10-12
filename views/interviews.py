@@ -23,7 +23,9 @@ from services.job_service import JobService
 from services.question_bank_service import QuestionBankService, split_options
 from views import candidate_profile
 from ui import components
+from ui.helpers import run_action
 from ui.navigation import OFFER_PREFILL_APP, OPEN_CREATE_JOB, OPEN_CREATE_OFFER, go_to
+from ui.theme import COLORS
 
 
 _LIST_CACHE_TTL = 30
@@ -50,8 +52,7 @@ _STATUS_LABELS = {
 _STATUS_COLORS = {
     "Scheduled": "#3b82f6", "In Progress": "#f59e0b", "Completed": "#22c55e", "Cancelled": "#ef4444",
 }
-_COLOR_GOOD, _COLOR_MID, _COLOR_BAD = "#22c55e", "#f59e0b", "#ef4444"
-_GOOD_THRESHOLD, _MID_THRESHOLD = 75, 50
+_DEFAULT_STATUS_COLOR = "#64748b"
 
 _CSS = """
 <style>
@@ -60,18 +61,8 @@ _CSS = """
 .ats-hcell{min-width:120px}
 .ats-hlabel{font-size:.72rem;opacity:.65;margin-bottom:2px}
 .ats-hvalue{font-size:.95rem;font-weight:600}
-.ats-badge{display:inline-block;padding:3px 12px;border-radius:999px;font-size:.8rem;font-weight:700;
-  color:var(--c);border:1px solid var(--c);background:color-mix(in srgb,var(--c) 14%,transparent)}
 .ats-chip{display:inline-block;padding:2px 10px;margin:0 4px 4px 0;border-radius:999px;font-size:.75rem;
   border:1px solid rgba(128,128,128,.35);opacity:.9}
-.ats-ring-wrap{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:84px}
-.ats-ring-box{position:relative;display:grid;place-items:center}
-.ats-ring{position:absolute;inset:0;border-radius:50%;
-  background:conic-gradient(var(--c) calc(var(--p)*1%),rgba(128,128,128,.22) 0);
-  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 7px),#000 calc(100% - 6px));
-  mask:radial-gradient(farthest-side,transparent calc(100% - 7px),#000 calc(100% - 6px))}
-.ats-ring-val{position:relative;font-weight:700}
-.ats-ring-label{font-size:.75rem;opacity:.8;text-align:center}
 .ats-rings{display:flex;flex-wrap:wrap;gap:18px}
 .ats-journey{display:flex;padding:6px 0 2px}
 .ats-step{flex:1;text-align:center;position:relative}
@@ -85,10 +76,6 @@ _CSS = """
 .ats-step.current .ats-dot{background:#fff;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.3)}
 .ats-step-label{font-size:.68rem;margin-top:6px;opacity:.8}
 .ats-step.current .ats-step-label{font-weight:700;opacity:1}
-.ats-bar-row{margin-bottom:8px}
-.ats-bar-head{display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:3px}
-.ats-bar-track{height:7px;border-radius:999px;background:rgba(128,128,128,.22);overflow:hidden}
-.ats-bar-fill{height:100%;border-radius:999px}
 .ats-section-title{font-size:1.02rem;font-weight:700;margin:2px 0 8px}
 </style>
 """
@@ -100,38 +87,9 @@ def _inject_css() -> None:
 
 # ------------------------------------------------------------ مكوّنات عرض صغيرة
 
-def _score_color(value: float) -> str:
-    if value >= _GOOD_THRESHOLD:
-        return _COLOR_GOOD
-    return _COLOR_MID if value >= _MID_THRESHOLD else _COLOR_BAD
-
-
-def _ring(value: float | None, label: str, size: int = 64) -> str:
-    pct = max(0.0, min(100.0, float(value or 0)))
-    return (
-        f'<div class="ats-ring-wrap"><div class="ats-ring-box" style="width:{size}px;height:{size}px">'
-        f'<div class="ats-ring" style="--p:{pct};--c:{_score_color(pct)}"></div>'
-        f'<span class="ats-ring-val" style="font-size:{size // 4}px">{pct:g}</span></div>'
-        f'<div class="ats-ring-label">{html.escape(label)}</div></div>'
-    )
-
-
-def _bar(label: str, value: float) -> str:
-    pct = max(0.0, min(100.0, float(value)))
-    return (
-        f'<div class="ats-bar-row"><div class="ats-bar-head"><span>{html.escape(label)}</span>'
-        f'<span>{pct:g}%</span></div><div class="ats-bar-track">'
-        f'<div class="ats-bar-fill" style="width:{pct}%;background:{_score_color(pct)}"></div></div></div>'
-    )
-
-
-def _badge(text: str, color: str) -> str:
-    return f'<span class="ats-badge" style="--c:{color}">{html.escape(text)}</span>'
-
-
 def _journey_html(status: str) -> str:
     if status == "Rejected":
-        return _badge("❌ مرفوض", _COLOR_BAD)
+        return components.badge("❌ مرفوض", COLORS["danger"])
     stages = [s for s in APPLICATION_STATUSES if s != "Rejected"]
     current = stages.index(status) if status in stages else 0
     steps = "".join(
@@ -157,21 +115,6 @@ def _show_flash() -> None:
     if flash:
         level, message = flash
         getattr(st, level)(message)
-
-
-def _run(action, success: str | None = None, rerun: bool = True) -> bool:
-    """ينفّذ عملية على الخدمات داخل جلسة، ويعرض الخطأ للمستخدم. يرجع True عند النجاح."""
-    try:
-        with get_db_session() as session:
-            action(session)
-    except SmartATSError as exc:
-        st.error(str(exc))
-        return False
-    if success:
-        st.toast(success)
-    if rerun:
-        st.rerun()
-    return True
 
 
 # ------------------------------------------------------------ تنبيه تكرار المقابلة
@@ -222,11 +165,11 @@ def _render_bank_question_row(q) -> None:
         col_save, col_del = st.columns(2)
         with col_save:
             if st.button("💾 حفظ", key=f"bank_save_{q.id}", width="stretch"):
-                _run(lambda s: QuestionBankService(s).update_question(
+                run_action(lambda s: QuestionBankService(s).update_question(
                     q.id, text, competency=competency, difficulty=difficulty), "تم الحفظ ✅")
         with col_del:
             if st.button("🗑️ حذف", key=f"bank_del_{q.id}", width="stretch"):
-                _run(lambda s: QuestionBankService(s).delete_question(q.id), "تم الحذف 🗑️")
+                run_action(lambda s: QuestionBankService(s).delete_question(q.id), "تم الحذف 🗑️")
 
 
 def _render_add_question_form(interview_id: int) -> None:
@@ -243,7 +186,7 @@ def _render_add_question_form(interview_id: int) -> None:
         options_raw = st.text_input("الخيارات (لسؤال الاختيار فقط، مفصولة بفاصلة)")
         submitted = st.form_submit_button("إضافة", type="primary")
     if submitted:
-        _run(lambda s: QuestionBankService(s).add_question(
+        run_action(lambda s: QuestionBankService(s).add_question(
             interview_id, text, question_type=qtype, options=split_options(options_raw),
             competency=competency, difficulty=difficulty), "تمت إضافة السؤال ✅")
 
@@ -315,7 +258,7 @@ def _render_question_tools(interview, job, candidate) -> None:
         value=weights_text, key=f"weights_{job.id}_{interview.id}", height=90,
     )
     if st.button("💾 حفظ الأوزان", key=f"weights_save_{job.id}_{interview.id}"):
-        _run(lambda s: QuestionBankService(s).set_competency_weights(job.id, raw), "تم حفظ الأوزان ✅")
+        run_action(lambda s: QuestionBankService(s).set_competency_weights(job.id, raw), "تم حفظ الأوزان ✅")
 
 
 def _render_question_bank(interview, job, candidate, questions: list) -> None:
@@ -434,8 +377,9 @@ def _render_header(interview, job, candidate) -> None:
         f'<div class="ats-hvalue">{html.escape(value)}</div></div>'
         for label, value in cells
     )
-    badge = _badge(
-        _STATUS_LABELS.get(interview.status, interview.status), _STATUS_COLORS.get(interview.status, "#64748b")
+    badge = components.badge(
+        _STATUS_LABELS.get(interview.status, interview.status),
+        _STATUS_COLORS.get(interview.status, _DEFAULT_STATUS_COLOR),
     )
     st.markdown(
         f'<div class="ats-header">{cells_html}<div class="ats-hcell"><div class="ats-hlabel">الحالة</div>'
@@ -449,12 +393,12 @@ def _render_header(interview, job, candidate) -> None:
         col_start, col_done, _ = st.columns([1, 1, 4])
         with col_start:
             if can_start and st.button("▶️ بدء المقابلة", key=f"start_{interview.id}", width="stretch"):
-                _run(lambda s: InterviewService(s).update(interview.id, status="In Progress"))
+                run_action(lambda s: InterviewService(s).update(interview.id, status="In Progress"))
         with col_done:
             if can_finish and st.button(
                 "✅ إنهاء المقابلة", key=f"complete_{interview.id}", type="primary", width="stretch"
             ):
-                _run(lambda s: InterviewService(s).update(interview.id, status="Completed"))
+                run_action(lambda s: InterviewService(s).update(interview.id, status="Completed"))
 
 
 # ------------------------------------------------------------ بطاقة المرشح (العمود الأيسر)
@@ -476,7 +420,7 @@ def _render_candidate_panel(interview, candidate, app_status: str, score, histor
                 st.caption(f"⏳ {candidate.total_experience_years:g} سنة خبرة")
         with col_score:
             if score is not None:
-                st.markdown(_ring(score, "مطابقة ATS", 68), unsafe_allow_html=True)
+                st.markdown(components.score_ring(score, "مطابقة ATS", 68), unsafe_allow_html=True)
 
     with st.container(border=True):
         st.markdown("**🧭 رحلة المرشح**")
@@ -556,7 +500,7 @@ def _render_ai_analysis(answer, interview_id: int, question_id: int) -> None:
             dims = answer.ai_dimensions or {}
             if dims:
                 st.markdown(
-                    "".join(_bar(_DIMENSION_LABELS.get(n, n), v) for n, v in dims.items()),
+                    "".join(components.labeled_bar(_DIMENSION_LABELS.get(n, n), v) for n, v in dims.items()),
                     unsafe_allow_html=True,
                 )
         with col_notes:
@@ -569,7 +513,7 @@ def _render_ai_analysis(answer, interview_id: int, question_id: int) -> None:
         if answer.ai_followup:
             st.info(f"💬 سؤال متابعة مقترح: {answer.ai_followup}")
             if st.button("➕ أضفه لأسئلة هذه المقابلة", key=f"followup_{interview_id}_{question_id}"):
-                _run(lambda s: QuestionBankService(s).add_question(
+                run_action(lambda s: QuestionBankService(s).add_question(
                     interview_id, answer.ai_followup, source="ai", category="cv_specific"),
                     "تمت إضافة سؤال المتابعة ✅")
 
@@ -594,7 +538,7 @@ def _render_interviewer_review(interview_id: int, question_id: int, answer) -> N
                 key=f"rv_notes_{interview_id}_{question_id}", height=80,
             )
         if st.button("💾 حفظ تقييمي", key=f"rv_save_{interview_id}_{question_id}"):
-            _run(lambda s: InterviewService(s).set_interviewer_review(
+            run_action(lambda s: InterviewService(s).set_interviewer_review(
                 interview_id, question_id, score or None, notes), "تم الحفظ ✅")
         if answer and answer.eval_score is not None:
             source = "تقييم المُقابِل" if answer.eval_method == "manual" else "تحليل الذكاء الاصطناعي"
@@ -622,7 +566,7 @@ def _render_question_workspace(interview, job, question, answer, index: int, tot
         col_save, col_ai = st.columns(2)
         with col_save:
             if st.button("💾 حفظ الإجابة", key=f"ans_save_{iid}_{qid}", width="stretch"):
-                _run(lambda s: InterviewService(s).save_answer(iid, qid, answer_text), "تم الحفظ ✅")
+                run_action(lambda s: InterviewService(s).save_answer(iid, qid, answer_text), "تم الحفظ ✅")
         with col_ai:
             if st.button("🤖 تحليل بالذكاء الاصطناعي", key=f"ans_ai_{iid}_{qid}", type="primary", width="stretch"):
                 def analyze(session) -> None:
@@ -630,7 +574,7 @@ def _render_question_workspace(interview, job, question, answer, index: int, tot
                     service.save_answer(iid, qid, answer_text)
                     session.flush()  # لتظهر الإجابة المحفوظة للتو ضمن السياق المرجعي
                     service.evaluate_answer(iid, qid, job)
-                _run(analyze, "تم التحليل ✅")
+                run_action(analyze, "تم التحليل ✅")
 
     _render_ai_analysis(answer, iid, qid)
     _render_interviewer_review(iid, qid, answer)
@@ -649,14 +593,14 @@ def _render_evaluation(interview, job) -> None:
         col_rings, col_overall = st.columns([3, 1])
         with col_rings:
             if report["scores"]:
-                rings = "".join(_ring(v, n) for n, v in report["scores"].items())
+                rings = "".join(components.score_ring(v, n) for n, v in report["scores"].items())
                 st.markdown(f'<div class="ats-rings">{rings}</div>', unsafe_allow_html=True)
                 st.caption("الدرجة الكلية للكفاءات تُحسب على الكفاءات المُقيَّمة فقط، بأوزان الوظيفة إن وُجدت.")
             else:
                 st.caption("اربط الأسئلة بكفاءات من تبويب «📝 أسئلة المقابلة» لتظهر درجات الكفاءات هنا.")
         with col_overall:
             if interview.overall_score is not None:
-                st.markdown(_ring(interview.overall_score, "الدرجة النهائية", 96), unsafe_allow_html=True)
+                st.markdown(components.score_ring(interview.overall_score, "الدرجة النهائية", 96), unsafe_allow_html=True)
                 source = "معدَّلة يدوياً" if interview.overall_method == "manual" else "محسوبة تلقائياً"
                 st.caption(f"{source} · أسئلة مقيَّمة: {scored} من {written}")
             else:
@@ -705,7 +649,7 @@ def _render_evaluation(interview, job) -> None:
                 # إن لم تتغير الدرجة نحدّث الملاحظات فقط فلا تُوسَم الدرجة المحسوبة بأنها يدوية
                 service.set_overall(interview.id, new_score if new_score != current else None, notes, decision)
                 service.update(interview.id, notes=interviewer_notes.strip() or None)
-            _run(save_final, "تم حفظ التقييم النهائي ✅")
+            run_action(save_final, "تم حفظ التقييم النهائي ✅")
 
 
 # ------------------------------------------------------------ تبويب الإدارة: تعديل / تصدير / استيراد / حذف
@@ -717,11 +661,11 @@ def _render_edit_interview(interview) -> None:
             values = _header_fields(f"edit_{interview.id}", interview)
             saved = st.form_submit_button("💾 حفظ", type="primary")
         if saved:
-            _run(lambda s: InterviewService(s).update(interview.id, **values), "تم حفظ التعديلات ✅")
+            run_action(lambda s: InterviewService(s).update(interview.id, **values), "تم حفظ التعديلات ✅")
         st.caption("حذف المقابلة يحذف أسئلتها وإجابات المرشح عليها نهائياً.")
         confirm = st.checkbox("تأكيد حذف هذه المقابلة", key=f"confirm_del_{interview.id}")
         if st.button("🗑️ حذف المقابلة", disabled=not confirm, key=f"del_{interview.id}"):
-            _run(lambda s: InterviewService(s).delete(interview.id), "تم حذف المقابلة 🗑️")
+            run_action(lambda s: InterviewService(s).delete(interview.id), "تم حذف المقابلة 🗑️")
 
 
 def _render_export_questions(interview, job, candidate, questions: list) -> None:
