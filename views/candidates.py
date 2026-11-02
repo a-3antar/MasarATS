@@ -264,12 +264,16 @@ def _render_toolbar(data: dict) -> tuple[str, bool]:
         c1, c2, c3, c4, c5, c6 = st.columns([1.3, 1.3, 1.6, 1.3, 1.6, 1.2])
         c1.multiselect("الحالة", CANDIDATE_STATUSES, key="cand_f_status", placeholder="الحالة")
         c2.multiselect("المستوى", data["levels"], key="cand_f_level", placeholder="المستوى الوظيفي")
-        c3.slider("الخبرة (سنة)", 0, _EXP_MAX, key="cand_f_exp", value=_FILTER_DEFAULTS["cand_f_exp"])
+        c3.slider("الخبرة (سنة)", 0, _EXP_MAX, key="cand_f_exp")
         c4.multiselect("الموقع", data["locations"], key="cand_f_loc", placeholder="الموقع")
         c5.multiselect("المهارات", data["top_skills"], key="cand_f_skills", placeholder="المهارات")
         c6.selectbox("الترتيب", _SORT_OPTIONS, key="cand_sort")
     return query.strip(), bool(smart)
 
+def _init_filter_state() -> None:
+    """يضبط القيم الافتراضية للفلاتر مرة واحدة فقط (قبل رسم أي ودجت)."""
+    for key, value in _FILTER_DEFAULTS.items():
+        st.session_state.setdefault(key, value)
 
 def _render_export(ids: list[int]) -> None:
     with st.popover("⬇️ تصدير"):
@@ -354,7 +358,7 @@ def render() -> None:
     if not candidates:
         _render_empty_database()
         return
-
+    _init_filter_state()
     query, smart = _render_toolbar(data)
 
     reasons: dict[int, str] = {}

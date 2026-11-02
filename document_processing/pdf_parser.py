@@ -1,3 +1,4 @@
+import re
 
 from ai.vision import transcribe_image
 from core.constants import (
@@ -14,6 +15,22 @@ from document_processing.base import DocumentParser, PhotoCandidate,  pick_best_
 
 logger = get_logger(__name__)
 
+_READABLE_RE = re.compile(
+    r"[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF"
+    r"A-Za-z0-9\s.,:;!?()\[\]{}\-_/\\@+#&%$*|'\"<>=•·–—،؛؟]"
+)
+_MIN_READABLE_RATIO = 0.7
+_MIN_CHARS_TO_JUDGE = 40
+
+
+def _is_garbled(text: str) -> bool:
+    """نص PDF تالف: خط بلا خريطة Unicode يُخرج رموزاً عشوائية بدل الحروف."""
+    compact = "".join(text.split())
+    if len(compact) < _MIN_CHARS_TO_JUDGE:
+        return False
+    readable = sum(1 for ch in compact if _READABLE_RE.match(ch))
+    return readable / len(compact) < _MIN_READABLE_RATIO
+
 
 class PDFParser(DocumentParser):
 
@@ -26,21 +43,34 @@ class PDFParser(DocumentParser):
         try:
             text_parts: list[str] = []
             vision_views = 0
+            last_error: DocumentParsingError | None = None
             with fitz.open(file_path) as document:
                 for page in document:
                     page_text = page.get_text().strip()
-                    if len(page_text) < OCR_MIN_CHARS_PER_PAGE and vision_views < OCR_MAX_views:
-                        vision_text = self._read_page_with_vision(page)
+                    garbled = _is_garbled(page_text)
+                    if (len(page_text) < OCR_MIN_CHARS_PER_PAGE or garbled) and vision_views < OCR_MAX_views:
                         vision_views += 1
+                        try:
+                            vision_text = self._read_page_with_vision(page)
+                        except DocumentParsingError as exc:
+                            last_error = exc
+                            logger.warning("Vision failed for page %s: %s", page.number + 1, exc)
+                            vision_text = ""
                         if vision_text:
-                            page_text = f"{page_text}\n{vision_text}".strip()
+                            page_text = vision_text if garbled else f"{page_text}\n{vision_text}".strip()
+                        elif garbled:
+                            page_text = ""
+                    elif garbled:
+                        page_text = ""
                     text_parts.append(page_text)
 
-            text = "\n".join(text_parts).strip()
+            text = "\n".join(p for p in text_parts if p).strip()
             if vision_views:
                 logger.info("Gemini Vision used for %s page(s) of %s", vision_views, file_path)
 
             if not text:
+                if last_error is not None:
+                    raise last_error
                 raise DocumentParsingError("لم يتم العثور على نص في الملف حتى بعد قراءته بالذكاء الاصطناعي.")
             return text
         except DocumentParsingError:
@@ -105,11 +135,16 @@ class PDFParser(DocumentParser):
         try:
             import pymupdf as fitz
             with fitz.open(file_path) as document:
-                pages = len(document)
-                if not pages:
+                if not len(document):
                     return False
-                chars = sum(len(page.get_text().strip()) for page in document)
-            return chars / pages < SCANNED_AVG_CHARS_PER_PAGE
+                texts = [page.get_text().strip() for page in document]
+
+            non_empty = [t for t in texts if t]
+            if not non_empty:
+                return True
+            if _is_garbled("\n".join(non_empty)):
+                return True
+            return sum(len(t) for t in non_empty) / len(non_empty) < SCANNED_AVG_CHARS_PER_PAGE
         except Exception as exc:  # noqa: BLE001
             logger.warning("Scanned check failed: %s", exc)
             return False
@@ -122,3 +157,4 @@ class PDFParser(DocumentParser):
         except Exception as exc:  # noqa: BLE001
             logger.warning("First page render failed: %s", exc)
             return None
+
