@@ -18,6 +18,7 @@ from repositories.job_question_repository import JobQuestionRepository
 from services.application_service import ApplicationService
 from datetime import date, datetime, timezone
 from models.job_question import JobQuestion
+from models.application import Application
 
 logger = get_logger(__name__)
 
@@ -77,6 +78,42 @@ class InterviewService:
             )
         logger.info("Interview %s scheduled for application %s", interview.code, application_id)
         return interview
+    def export_rows_by_candidate(self, candidate_ids) -> dict[int, list[dict]]:
+        ids = list(candidate_ids)
+        if not ids:
+            return {}
+        rows = self._session.execute(
+            select(Interview, Application.candidate_id, Job.title)
+            .join(Application, Application.id == Interview.application_id)
+            .join(Job, Job.id == Application.job_id)
+            .where(Application.candidate_id.in_(ids))
+            .order_by(Interview.scheduled_at)
+        ).all()
+        interview_ids = [iv.id for iv, _, _ in rows]
+        answers: dict[int, list[dict]] = {}
+        if interview_ids:
+            for answer, question in self._session.execute(
+                select(InterviewAnswer, JobQuestion)
+                .join(JobQuestion, JobQuestion.id == InterviewAnswer.question_id)
+                .where(InterviewAnswer.interview_id.in_(interview_ids))
+                .order_by(JobQuestion.id)
+            ).all():
+                answers.setdefault(answer.interview_id, []).append({
+                    "question": question.question, "answer": answer.answer,
+                    "ai_score": answer.ai_score, "manual_score": answer.manual_score,
+                    "eval_score": answer.eval_score, "feedback": answer.eval_feedback,
+                    "notes": answer.interviewer_notes,
+                })
+        result: dict[int, list[dict]] = {}
+        for iv, candidate_id, job_title in rows:
+            result.setdefault(candidate_id, []).append({
+                "code": iv.code or f"#{iv.id}", "job": job_title, "type": iv.interview_type,
+                "status": iv.status, "when": iv.scheduled_at.strftime("%Y-%m-%d %H:%M") if iv.scheduled_at else "-",
+                "interviewer": iv.interviewer, "overall": iv.overall_score, "decision": iv.decision,
+                "overall_notes": iv.overall_notes, "notes": iv.notes,
+                "answers": answers.get(iv.id, []),
+            })
+        return result
 
     def update(self, interview_id: int, **fields) -> Interview:
         interview = self._get_or_raise(interview_id)

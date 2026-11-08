@@ -36,6 +36,14 @@ from ai.retry import call_with_retry
 from services.age_calculator import calculate_age
 from services.experience_calculator import estimate_total_years, sort_experience_newest_first
 
+from sqlalchemy import delete, select
+from core.auth_context import enforce_bulk
+from models.application import Application
+from models.application_stage_history import ApplicationStageHistory
+from models.interview import Interview
+from models.interview_answer import InterviewAnswer
+from models.job_question import JobQuestion
+from models.offer import Offer
 
 
 logger = get_logger(__name__)
@@ -67,6 +75,10 @@ def detect_language(text: str) -> str:
     latin = len(_LATIN_CHARS_RE.findall(text or ""))
     return "ar" if arabic > latin else "en"
 
+def _name_matches_language(name: str, lang: str) -> bool:
+    arabic = len(_ARABIC_CHARS_RE.findall(name or ""))
+    latin = len(_LATIN_CHARS_RE.findall(name or ""))
+    return arabic > latin if lang == "ar" else latin > arabic
 
 def candidate_language(candidate: Candidate) -> str:
     if candidate.original_language in _LANGUAGE_NAMES:
@@ -87,7 +99,6 @@ def analysis_language(analysis: dict) -> str:
         parts.extend(value if isinstance(value, list) else [value or ""])
     return detect_language(" ".join(str(p) for p in parts))
 
-
 def analysis_for_language(candidate: Candidate, lang: str) -> dict:
     analysis = candidate.ai_analysis or {}
     if analysis and lang != analysis_language(analysis):
@@ -95,6 +106,16 @@ def analysis_for_language(candidate: Candidate, lang: str) -> dict:
         if translated:
             return {**analysis, **translated}
     return analysis
+
+def localized_value(candidate: Candidate, attr: str, lang: str):
+    if lang != candidate_language(candidate):
+        translated = ((candidate.translations or {}).get(lang) or {}).get(attr)
+        if translated:
+            return translated
+    value = getattr(candidate, attr)
+    if attr == "previous_positions" and not value:
+        return CandidateService._positions_from_experience(candidate.experience)
+    return value
 
 class CandidateService:
     def __init__(self, session: Session) -> None:
@@ -182,6 +203,80 @@ class CandidateService:
 
         logger.info("Candidate created from CV upload: %s (%s)", candidate.full_name, original_filename)
         candidate.pending_face_image = page_png
+        return candidate
+
+    def delete_candidate(self, candidate_id: int) -> None:
+        enforce_bulk()  # للأدمن فقط
+        candidate = self._get_or_raise(candidate_id)
+
+        from services.application_service import ApplicationService
+
+        apps = ApplicationRepository(self._session).get_for_candidate(candidate_id)
+        app_service = ApplicationService(self._session)
+        for app in apps:
+            if app.status == "Hired":  # ينقص العدد الحالي للمسمى في الهيكل
+                app_service.change_status(app.id, "Rejected", note="حذف المرشح")
+        self._session.flush()
+
+        app_ids = [a.id for a in apps]
+        if app_ids:
+            interview_ids = select(Interview.id).where(Interview.application_id.in_(app_ids))
+            self._session.execute(delete(InterviewAnswer).where(InterviewAnswer.interview_id.in_(interview_ids)))
+            self._session.execute(delete(JobQuestion).where(JobQuestion.interview_id.in_(interview_ids)))
+            self._session.execute(delete(Interview).where(Interview.application_id.in_(app_ids)))
+            self._session.execute(delete(Offer).where(Offer.application_id.in_(app_ids)))
+            self._session.execute(
+                delete(ApplicationStageHistory).where(ApplicationStageHistory.application_id.in_(app_ids))
+            )
+            self._session.execute(delete(Application).where(Application.id.in_(app_ids)))
+
+        self._delete_photo_file(candidate.photo_path)
+        self._candidates.delete(candidate)
+        logger.info("Candidate %s deleted", candidate_id)
+
+    def reanalyze_candidate(self, candidate_id: int) -> Candidate:
+        candidate = self._get_or_raise(candidate_id)
+        if not self._ai_available():
+            raise AIServiceError("إعادة التحليل تحتاج GEMINI_API_KEY في ملف .env")
+        if not candidate.raw_text:
+            raise ValidationError("لا يوجد نص محفوظ لهذه السيرة (سيرة ممسوحة أو إدخال يدوي). ارفع الملف من جديد.")
+
+        from ai.gemini_service import GeminiService
+
+        text = candidate.raw_text
+        profile = call_with_retry(lambda: GeminiService().extract_structured(text, CandidateProfile))
+        profile.experience = sort_experience_newest_first(profile.experience)
+        latest = profile.experience[0] if profile.experience else None
+        position = (latest.position if latest and latest.position else None) or profile.current_position
+
+        candidate.full_name = profile.full_name or candidate.full_name
+        candidate.email = profile.email or candidate.email
+        candidate.phone = profile.phone or candidate.phone
+        candidate.linkedin_url = profile.linkedin_url or candidate.linkedin_url
+        candidate.location = profile.location or candidate.location
+        candidate.birth_date = profile.birth_date
+        candidate.age = calculate_age(profile.birth_date) or profile.age
+        candidate.marital_status = profile.marital_status
+        candidate.military_status = profile.military_status
+        candidate.languages = profile.languages
+        candidate.current_position = position
+        candidate.total_experience_years = estimate_total_years(profile.experience) or profile.total_experience_years
+        candidate.skills = profile.skills
+        candidate.technical_skills = profile.technical_skills
+        candidate.computer_skills = profile.computer_skills
+        candidate.managerial_skills = profile.managerial_skills
+        candidate.soft_skills = profile.soft_skills
+        candidate.industries = profile.industries
+        candidate.previous_companies = self._unique_field(profile.experience, "company")
+        candidate.previous_positions = self._unique_field(profile.experience, "position")
+        candidate.education = [e.model_dump() for e in profile.education]
+        candidate.experience = [e.model_dump() for e in profile.experience]
+        candidate.summary = profile.summary
+
+        candidate.translations = {}
+        candidate.original_language = None
+        candidate.embedding, candidate.embedding_meta = None, {}
+        self.generate_ai_analysis(candidate_id, force=True, retry=True)
         return candidate
 
     def _extract_profile(self, raw_text: str, fallback_name: str) -> CandidateProfile:
@@ -296,8 +391,22 @@ class CandidateService:
 
         from ai.gemini_service import GeminiService
 
-        translated = GeminiService().translate_json(payload, _LANGUAGE_NAMES[target])
+        service = GeminiService()
+        translated = service.translate_json(payload, _LANGUAGE_NAMES[target])
         cleaned = self._clean_translation(payload, translated)
+
+        name = payload.get("full_name")
+        if name and not _name_matches_language(cleaned.get("full_name", ""), target):
+            try:
+                fixed = call_with_retry(lambda: service.transliterate_name(name, _LANGUAGE_NAMES[target]))
+            except AIServiceError as exc:
+                logger.warning("Name transliteration failed for candidate %s: %s", candidate_id, exc)
+                fixed = ""
+            if fixed and _name_matches_language(fixed, target):
+                cleaned["full_name"] = fixed
+            else:
+                cleaned.pop("full_name", None)  # لا نحفظ اسماً بالحروف الخطأ
+    
         if not cleaned:
             raise AIServiceError("لم تُرجع الترجمة بياناتٍ صالحة.")
 

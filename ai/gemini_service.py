@@ -20,6 +20,23 @@ _ATTACHED_FILE_NOTE = (
 _PRIOR_CONTEXT_MAX_CHARS = 4000
 _NO_PRIOR_CONTEXT = "لا يوجد"
 
+def transliterate_name(self, name: str, target_language: str) -> str:
+        from ai.prompts import NAME_TRANSLITERATION_PROMPT_TEMPLATE
+
+        script = "العربية" if target_language == "Arabic" else "اللاتينية (الإنجليزية)"
+        raw_text = ""
+        try:
+            client = self._client()
+            response = client.models.generate_content(
+                model=self._settings.ai_model,
+                contents=NAME_TRANSLITERATION_PROMPT_TEMPLATE.format(name=name[:150], script=script),
+                config={"temperature": 0.0, "max_output_tokens": 64},
+            )
+            raw_text = (response.text or "").strip().strip("\"'«»")
+            return raw_text.splitlines()[0].strip() if raw_text else ""
+        except Exception as exc:
+            logger.error("Gemini name transliteration failed: %s | raw_response=%s", exc, raw_text[:200])
+            raise AIServiceError(f"فشل كتابة الاسم صوتياً: {exc}") from exc
 
 def _pydantic_to_gemini_schema(schema: type[BaseModel]) -> dict[str, Any]:
     json_schema = schema.model_json_schema()
@@ -95,6 +112,24 @@ class GeminiService(AIProvider):
         prompt = CV_EXTRACTION_PROMPT_TEMPLATE.format(cv_text=_ATTACHED_FILE_NOTE)
         return self._extract([prompt, types.Part.from_bytes(data=data, mime_type=mime_type)], schema)
 
+    def transliterate_name(self, name: str, target_language: str) -> str:
+        from ai.prompts import NAME_TRANSLITERATION_PROMPT_TEMPLATE
+
+        script = "العربية" if target_language == "Arabic" else "اللاتينية (الإنجليزية)"
+        raw_text = ""
+        try:
+            client = self._client()
+            response = client.models.generate_content(
+                model=self._settings.ai_model,
+                contents=NAME_TRANSLITERATION_PROMPT_TEMPLATE.format(name=name[:150], script=script),
+                config={"temperature": 0.0, "max_output_tokens": 64},
+            )
+            raw_text = (response.text or "").strip().strip("\"'«»")
+            return raw_text.splitlines()[0].strip() if raw_text else ""
+        except Exception as exc:
+            logger.error("Gemini name transliteration failed: %s | raw_response=%s", exc, raw_text[:200])
+            raise AIServiceError(f"فشل كتابة الاسم صوتياً: {exc}") from exc
+    
     def _extract(self, contents, schema: type[BaseModel]) -> BaseModel:
         raw_text = ""
         try:

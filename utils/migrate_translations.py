@@ -12,7 +12,11 @@ import concurrent.futures
 import sys
 import time
 from services.candidate_service import (
-    ANALYSIS_KEYS, CandidateService, analysis_language, candidate_language,
+    ANALYSIS_KEYS, 
+    CandidateService, 
+    analysis_language, 
+    candidate_language, 
+    _name_matches_language,
 )
 from sqlalchemy import select
 
@@ -22,7 +26,7 @@ from core.exceptions import SmartATSError, ValidationError
 from core.logging import get_logger, setup_logging
 from database.database import get_db_session, init_db
 from models.candidate import Candidate
-from services.candidate_service import CandidateService, candidate_language
+
 
 logger = get_logger("migrate_translations")
 
@@ -44,7 +48,11 @@ def _pending_ids() -> dict[int, bool]:
             translations = candidate.translations or {}
 
             saved = translations.get(_target_of(source))
-            needs_main = not saved or (bool(candidate.full_name) and "full_name" not in saved)
+            needs_main = (
+                not saved
+                or (bool(candidate.full_name) and "full_name" not in saved)
+                or (bool(saved.get("full_name")) and not _name_matches_language(saved["full_name"], _target_of(source)))
+            )
 
             analysis = candidate.ai_analysis or {}
             needs_analysis = False

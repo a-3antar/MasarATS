@@ -14,12 +14,16 @@ from core.exceptions import AIServiceError
 from database.database import get_db_session
 from matching.skill_normalizer import canonical_skill_set, has_skill
 from models.candidate import Candidate
-from services.candidate_service import CandidateService
 from services.export_service import ExportService
 from services.search_service import SearchService
 from ui import components
 from views import candidate_profile
 from ui.guards import can_edit
+from pathlib import Path
+
+from services.candidate_service import CandidateService, localized_value
+from services.interview_service import InterviewService
+from ui.theme import STAGE_LABELS
 
 _LIST_TTL = 30
 _THUMB_PX = 48
@@ -103,16 +107,21 @@ def _smart_search(query: str) -> dict:
         "results": [(r["candidate"].id, " · ".join(r["reasons"]) or "-") for r in found],
     }
 
-
 @st.cache_data(ttl=_LIST_TTL, show_spinner="جاري تجهيز الملف...")
-def _export(kind: str, ids: tuple[int, ...]) -> bytes:
+def _export(kind: str, ids: tuple[int, ...], lang: str = "ar") -> bytes:
     wanted = set(ids)
-    selected = [c for c in _load_data()["candidates"] if c.id in wanted]
+    data = _load_data()
+    selected = [c for c in data["candidates"] if c.id in wanted]
     if kind == "csv":
-        return ExportService.to_csv_bytes(ExportService.candidates_to_dataframe(selected))
+        return ExportService.to_csv_bytes(ExportService.candidates_to_dataframe(selected, lang))
     if kind == "xlsx":
-        return ExportService.to_excel_bytes(ExportService.candidates_to_dataframe(selected), "Candidates")
-    return ExportService.candidates_to_organized_workbook_bytes(selected)
+        return ExportService.to_excel_bytes(ExportService.candidates_to_dataframe(selected, lang), "Candidates")
+    photos = {cid: Path(p) for cid, p in data["photos"].items() if p and cid in wanted}
+    with get_db_session() as session:
+        interviews = InterviewService(session).export_rows_by_candidate(ids)
+    return ExportService.candidates_to_organized_workbook_bytes(
+        selected, lang=lang, photos=photos, interviews=interviews
+    )
 
 
 def invalidate_cache() -> None:
@@ -165,16 +174,16 @@ def _filters_chips_html(f: CandidateSearchFilters) -> str:
              "border:1px solid rgba(59,130,246,.35);background:rgba(59,130,246,.10)")
     return "".join(f'<span style="{style}">{html.escape(i)}</span>' for i in items)
 
-
 def _text_match(c: Candidate, query: str) -> bool:
     haystack = " ".join(
         str(v) for v in (
             c.full_name, c.email, c.phone, c.candidate_code, c.current_position, c.applied_job,
+            localized_value(c, "full_name", "ar"), localized_value(c, "full_name", "en"),
+            localized_value(c, "current_position", "ar"), localized_value(c, "current_position", "en"),
             " ".join(c.all_skills), " ".join(c.previous_companies or []),
         ) if v
     ).lower()
     return all(token in haystack for token in query.lower().split())
-
 
 def _passes_filters(c: Candidate, f: dict) -> bool:
     if f["status"] and (c.status or "New") not in f["status"]:
@@ -262,7 +271,8 @@ def _render_toolbar(data: dict) -> tuple[str, bool]:
             _render_manual_form()
 
         c1, c2, c3, c4, c5, c6 = st.columns([1.3, 1.3, 1.6, 1.3, 1.6, 1.2])
-        c1.multiselect("الحالة", CANDIDATE_STATUSES, key="cand_f_status", placeholder="الحالة")
+        c1.multiselect("الحالة", CANDIDATE_STATUSES, key="cand_f_status", placeholder="الحالة",
+               format_func=lambda s: STAGE_LABELS.get(s, s))
         c2.multiselect("المستوى", data["levels"], key="cand_f_level", placeholder="المستوى الوظيفي")
         c3.slider("الخبرة (سنة)", 0, _EXP_MAX, key="cand_f_exp")
         c4.multiselect("الموقع", data["locations"], key="cand_f_loc", placeholder="الموقع")
@@ -280,20 +290,21 @@ def _render_export(ids: list[int]) -> None:
         st.caption(f"{len(ids)} مرشح (كل النتائج الحالية وليس الصفحة فقط)")
         if not ids:
             return
+        lang_label = st.radio("لغة الملف", ["العربية", "English"], horizontal=True, key="cand_export_lang")
+        lang = "ar" if lang_label == "العربية" else "en"
         if st.toggle("تجهيز ملفات التصدير", key="cand_export_toggle"):
             key = tuple(ids)
-            st.download_button("📄 CSV", _export("csv", key), file_name="candidates.csv",
+            st.download_button("📄 CSV", _export("csv", key, lang), file_name="candidates.csv",
                                mime="text/csv", width="stretch", key="dl_cand_csv")
             st.download_button(
-                "📊 Excel", _export("xlsx", key), file_name="candidates.xlsx", width="stretch", key="dl_cand_xlsx",
+                "📊 Excel", _export("xlsx", key, lang), file_name="candidates.xlsx", width="stretch", key="dl_cand_xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
             st.download_button(
-                "🗂️ Excel منظّم", _export("organized", key), file_name="candidates_organized.xlsx",
-                width="stretch", key="dl_cand_org",
+                "🗂️ Excel منظّم (صور + تحليل + مقابلات)", _export("organized", key, lang),
+                file_name="candidates_organized.xlsx", width="stretch", key="dl_cand_org",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
-
 
 def _selected_id(table_key: str, page_ids: list[int]) -> int | None:
     try:
@@ -315,11 +326,11 @@ def _build_rows(page_items: list[Candidate], data: dict, reasons: dict[int, str]
         status = c.status or "New"
         row = {
             "الصورة": _thumb_uri(photo) if photo else None,
-            "الاسم": c.full_name,
-            "الوظيفة الحالية": c.current_position or "-",
+            "الاسم": localized_value(c, "full_name", "ar") or c.full_name,
+            "الوظيفة الحالية": localized_value(c, "current_position", "ar") or "-",
             "الخبرة": c.total_experience_years,
-            "الموقع": c.location or "-",
-            "الحالة": f"{_STATUS_ICONS.get(status, '⚪')} {status}",
+            "الموقع": localized_value(c, "location", "ar") or "-",
+            "الحالة": f"{_STATUS_ICONS.get(status, '⚪')} {STAGE_LABELS.get(status, status)}",
             "المطابقة": (data["summary"].get(c.id) or {}).get("best"),
             "الإجراء التالي": _next_action_label(status),
         }
@@ -406,7 +417,7 @@ def render() -> None:
     selected_id = _selected_id(table_key, page_ids)
 
     if selected_id is not None:
-        table_area, drawer_area = st.columns([5, 4], gap="medium")
+        table_area, drawer_area = st.columns([2, 5], gap="small")
     else:
         table_area, drawer_area = st.container(), None
 

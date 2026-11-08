@@ -16,6 +16,8 @@ from ui.navigation import OFFER_PREFILL_CANDIDATE, OPEN_CREATE_OFFER, go_to
 from services.candidate_service import (
     CandidateService, analysis_for_language, analysis_language, candidate_language,
 )
+from ui.guards import is_admin
+from ui.helpers import invalidate_all, split_items
 
 _SKILL_SECTIONS: list[tuple[str, str]] = [
     ("🛠️ المهارات الفنية", "technical_skills"),
@@ -55,6 +57,11 @@ _CSS = """
 .cp-title{font-size:.95rem;font-weight:700;margin:14px 0 6px}
 </style>
 """
+
+_EDIT_KEYS = ["name", "email", "phone", "lin", "loc", "age", "pos", "exp", "mar", "mil", "sum"] + [
+    attr for _, attr in _SKILL_SECTIONS + _BACKGROUND_SECTIONS + [_LANGUAGES_SECTION]
+]
+
 
 
 def _inject_css() -> None:
@@ -435,10 +442,42 @@ def _analysis_panel(candidate_id: int, polling: bool, lang: str) -> None:
     if meta:
         st.caption(f" {meta.get('created_at', '')[:16]}")
 
+
+
+def _render_reanalyze(candidate: Candidate) -> None:
+    cid = candidate.id
+    with st.container(border=True):
+        st.markdown("**🔄 إعادة تحليل بيانات المرشح**")
+        st.caption(
+            "يعيد استخراج البيانات من نص السيرة المحفوظ ثم يولّد تحليل الذكاء الاصطناعي من جديد. "
+            "الحالة والتقييم والراتب والملاحظات والصورة لا تتغير، أما الحقول المستخرجة (المهارات، الخبرات...) "
+            "فتُستبدل بما في السيرة وتُعاد الترجمة تلقائياً."
+        )
+        if st.button(
+            "🔄 إعادة التحليل", key=f"reanalyze_{cid}", disabled=not candidate.raw_text,
+            help=None if candidate.raw_text else "لا يوجد نص محفوظ لهذه السيرة.",
+        ):
+            try:
+                with st.spinner("جاري إعادة الاستخراج والتحليل..."):
+                    with get_db_session() as session:
+                        CandidateService(session).reanalyze_candidate(cid)
+                background_analysis.submit_translation(cid)
+                for key in _EDIT_KEYS:
+                    st.session_state.pop(f"{key}_{cid}", None)
+                st.session_state.pop(_TRANSLATION_TRIED.format(cid), None)
+                st.session_state.pop(f"tr_analysis_tried_{cid}", None)
+                clear_related_caches()
+                st.toast("تمت إعادة التحليل ✅")
+                st.rerun()
+            except SmartATSError as exc:
+                st.error(str(exc))
+
 def _render_edit_form(candidate: Candidate, photo_path) -> None:
     cid = candidate.id
     original = candidate_language(candidate)
     st.caption("التعديل يتم على النسخة الأصلية (لغة السيرة). عند تعديل المحتوى تُمسح الترجمة وتُعاد تلقائياً.")
+    _render_reanalyze(candidate)
+
     with st.form(f"edit_candidate_form_{cid}"):
         full_name = st.text_input("الاسم الكامل *", value=candidate.full_name, key=f"name_{cid}")
         email = st.text_input("البريد الإلكتروني", value=candidate.email or "", key=f"email_{cid}")
@@ -490,7 +529,37 @@ def _render_edit_form(candidate: Candidate, photo_path) -> None:
         new_photo = st.file_uploader("استبدال الصورة", type=["png", "jpg", "jpeg"], key=f"photo_{cid}")
         remove_photo = st.checkbox("حذف الصورة الحالية", key=f"rmphoto_{cid}") if photo_path else False
 
-        submitted = st.form_submit_button("💾 حفظ التعديلات", type="primary")
+        st.divider()
+        confirm_delete = st.checkbox(
+            "أؤكد حذف المرشح نهائياً مع تقديماته ومقابلاته وعروضه", key=f"confirm_del_cand_{cid}",
+            disabled=not is_admin(),
+        )
+        col_save, col_delete, _ = st.columns([1, 1, 2])
+        submitted = col_save.form_submit_button("💾 حفظ التعديلات", type="primary", width="stretch")
+        delete_clicked = col_delete.form_submit_button(
+            "🗑️ حذف المرشح", disabled=not is_admin(), width="stretch",
+            help=None if is_admin() else "حذف المرشح من صلاحيات الأدمن فقط.",
+        )
+
+    if delete_clicked:
+        if not confirm_delete:
+            st.warning("فعّل مربع تأكيد الحذف أولاً.")
+            return
+        try:
+            with get_db_session() as session:
+                CandidateService(session).delete_candidate(cid)
+        except SmartATSError as exc:
+            st.error(str(exc))
+            return
+        invalidate_all()
+        try:
+            from views import candidates as _candidates
+            _candidates._close_drawer()
+        except Exception:  # noqa: BLE001
+            pass
+        st.toast("تم حذف المرشح 🗑️")
+        st.rerun()
+        return
 
     if not submitted:
         return
