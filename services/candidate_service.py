@@ -1,9 +1,11 @@
 
 import hashlib
 import io
+import re
 import uuid
 from datetime import date
 from pathlib import Path
+import json
 
 from sqlalchemy.orm import Session
 from repositories.application_repository import ApplicationRepository
@@ -34,6 +36,8 @@ from ai.retry import call_with_retry
 from services.age_calculator import calculate_age
 from services.experience_calculator import estimate_total_years, sort_experience_newest_first
 
+
+
 logger = get_logger(__name__)
 
 PHOTOS_DIR = BASE_DIR / PHOTOS_SUBDIR
@@ -47,14 +51,50 @@ _EDITABLE_FIELDS = {
 }
 
 _TRANSLATABLE_FIELDS = (
-    "current_position", "location", "summary",
+    "full_name", "current_position", "location", "summary",
     "technical_skills", "computer_skills", "managerial_skills", "soft_skills", "skills",
     "industries", "previous_positions", "languages", "marital_status", "military_status",
     "education", "experience",
 )
 _NON_TRANSLATED_KEYS = {"company", "start_date", "end_date", "graduation_year"}
-_TARGET_LANGUAGE_NAMES = {"ar": "Arabic"}
+_LANGUAGE_NAMES = {"ar": "Arabic", "en": "English"}
+_ARABIC_CHARS_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F]")
+_LATIN_CHARS_RE = re.compile(r"[A-Za-z]")
 
+
+def detect_language(text: str) -> str:
+    arabic = len(_ARABIC_CHARS_RE.findall(text or ""))
+    latin = len(_LATIN_CHARS_RE.findall(text or ""))
+    return "ar" if arabic > latin else "en"
+
+
+def candidate_language(candidate: Candidate) -> str:
+    if candidate.original_language in _LANGUAGE_NAMES:
+        return candidate.original_language
+    parts = [candidate.summary, candidate.current_position, candidate.location, *candidate.all_skills]
+    for item in candidate.experience or []:
+        parts.append(item.get("position"))
+        parts.extend(item.get("responsibilities") or [])
+    return detect_language(" ".join(p for p in parts if p))
+
+ANALYSIS_KEYS = ("career_level", "strengths", "potential_gaps", "suitable_functions")
+
+
+def analysis_language(analysis: dict) -> str:
+    parts: list[str] = []
+    for key in ANALYSIS_KEYS:
+        value = analysis.get(key)
+        parts.extend(value if isinstance(value, list) else [value or ""])
+    return detect_language(" ".join(str(p) for p in parts))
+
+
+def analysis_for_language(candidate: Candidate, lang: str) -> dict:
+    analysis = candidate.ai_analysis or {}
+    if analysis and lang != analysis_language(analysis):
+        translated = ((candidate.translations or {}).get(lang) or {}).get("ai_analysis")
+        if translated:
+            return {**analysis, **translated}
+    return analysis
 
 class CandidateService:
     def __init__(self, session: Session) -> None:
@@ -231,12 +271,18 @@ class CandidateService:
         self._delete_photo_file(candidate.photo_path)
         candidate.photo_path = None
 
-
-    def translate_candidate(self, candidate_id: int, target: str = "ar") -> None:
-        if target not in _TARGET_LANGUAGE_NAMES:
-            raise ValidationError(f"لغة الترجمة غير مدعومة: {target}")
-
+    def translate_candidate(self, candidate_id: int, target: str | None = None, *, force: bool = False) -> None:
         candidate = self._get_or_raise(candidate_id)
+        source = candidate_language(candidate)
+        target = target or ("en" if source == "ar" else "ar")
+        if target not in _LANGUAGE_NAMES:
+            raise ValidationError(f"لغة الترجمة غير مدعومة: {target}")
+        if target == source:
+            raise ValidationError("هذه هي لغة السيرة الأصلية ولا تحتاج ترجمة.")
+        if candidate.original_language != source:
+            candidate.original_language = source
+        if not force and (candidate.translations or {}).get(target):
+            return
 
         payload: dict = {}
         for name in _TRANSLATABLE_FIELDS:
@@ -250,13 +296,42 @@ class CandidateService:
 
         from ai.gemini_service import GeminiService
 
-        translated = GeminiService().translate_json(payload, _TARGET_LANGUAGE_NAMES[target])
+        translated = GeminiService().translate_json(payload, _LANGUAGE_NAMES[target])
         cleaned = self._clean_translation(payload, translated)
         if not cleaned:
             raise AIServiceError("لم تُرجع الترجمة بياناتٍ صالحة.")
 
         translations = dict(candidate.translations or {})
-        translations[target] = cleaned
+        kept = {k: v for k, v in (translations.get(target) or {}).items() if k.startswith("ai_analysis")}
+        translations[target] = {**kept, **cleaned}
+        candidate.translations = translations
+
+    def translate_analysis(self, candidate_id: int, *, force: bool = False) -> None:
+        candidate = self._get_or_raise(candidate_id)
+        analysis = candidate.ai_analysis or {}
+        payload = {k: analysis[k] for k in ANALYSIS_KEYS if analysis.get(k)}
+        if not payload:
+            return
+
+        target = "en" if analysis_language(analysis) == "ar" else "ar"
+        digest = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        translations = dict(candidate.translations or {})
+        bucket = dict(translations.get(target) or {})
+        if not force and bucket.get("ai_analysis") and bucket.get("ai_analysis_src") == digest:
+            return
+
+        from ai.gemini_service import GeminiService
+
+        translated = GeminiService().translate_json(payload, _LANGUAGE_NAMES[target])
+        cleaned = self._clean_translation(payload, translated)
+        if not cleaned:
+            raise AIServiceError("لم تُرجع ترجمة التحليل بياناتٍ صالحة.")
+
+        bucket["ai_analysis"] = cleaned
+        bucket["ai_analysis_src"] = digest
+        translations[target] = bucket
         candidate.translations = translations
 
     @staticmethod

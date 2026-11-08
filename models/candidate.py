@@ -55,6 +55,7 @@ class Candidate(Base):
     notice_period_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     recruiter_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     translations: Mapped[dict] = mapped_column(JSON, default=dict, nullable=True)
+    original_language: Mapped[str | None] = mapped_column(String(5), nullable=True)
     source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     file_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)

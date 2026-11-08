@@ -7,12 +7,15 @@ from core.constants import CANDIDATE_STATUSES
 from core.exceptions import SmartATSError
 from database.database import get_db_session
 from models.candidate import Candidate
-from services.candidate_service import CandidateService
+from config.settings import get_settings
 from services.job_service import JobService
 from services import background_analysis
 from ui import components
 from ui.helpers import split_items
 from ui.navigation import OFFER_PREFILL_CANDIDATE, OPEN_CREATE_OFFER, go_to
+from services.candidate_service import (
+    CandidateService, analysis_for_language, analysis_language, candidate_language,
+)
 
 _SKILL_SECTIONS: list[tuple[str, str]] = [
     ("🛠️ المهارات الفنية", "technical_skills"),
@@ -29,7 +32,9 @@ _BACKGROUND_SECTIONS: list[tuple[str, str]] = [
 _LANGUAGES_SECTION: tuple[str, str] = ("🌐 اللغات", "languages")
 _PHOTO_WIDTH_PX = 96
 _MAX_RESPONSIBILITIES_SHOWN = 8
-_LANG_OPTIONS = {"English": "en", "العربية": "ar"}
+_LANG_OPTIONS = {"العربية": "ar", "English": "en"}
+_LANG_LABELS = {code: label for label, code in _LANG_OPTIONS.items()}
+_TRANSLATION_TRIED = "tr_tried_{}"
 _NOT_MENTIONED = "غير مذكور في السيرة الذاتية"
 _MAX_SUITABLE_JOBS = 5
 _POLL_SECONDS = 3
@@ -80,17 +85,15 @@ def _positions_from_experience(candidate: Candidate) -> list[str]:
             positions.append(value)
     return positions
 
-
 def _value(candidate: Candidate, attr: str, lang: str):
-    if lang == "ar":
-        translated = ((candidate.translations or {}).get("ar") or {}).get(attr)
+    if lang != candidate_language(candidate):
+        translated = ((candidate.translations or {}).get(lang) or {}).get(attr)
         if translated:
             return translated
     value = getattr(candidate, attr)
     if attr == "previous_positions" and not value:
         return _positions_from_experience(candidate)
     return value
-
 
 def clear_related_caches() -> None:
     clear_suitable_jobs_cache()
@@ -129,7 +132,7 @@ def _render_header(candidate: Candidate, photo_path, lang: str) -> None:
             st.markdown("## 👤")
     with col_info:
         status = candidate.status or "New"
-        st.markdown(f"### {candidate.full_name}")
+        st.markdown(f"### {_value(candidate, 'full_name', lang) or candidate.full_name}")
         st.markdown(_status_badge(status), unsafe_allow_html=True)
         position = _value(candidate, "current_position", lang)
         st.caption(" · ".join(p for p in (position, f"🆔 {candidate.candidate_code}" if candidate.candidate_code else None) if p))
@@ -224,32 +227,50 @@ def _kpis(candidate: Candidate, summary: dict | None) -> list[tuple[str, str]]:
     ]
     return items
 
+def _translation_notice(candidate_id: int) -> None:
+    if not background_analysis.is_translating(candidate_id):
+        st.rerun()
+    st.info("⏳ جاري الترجمة في الخلفية وستظهر تلقائياً عند اكتمالها (يُعرض الأصل مؤقتاً).")
+
 
 def _choose_language(candidate: Candidate) -> str:
     cid = candidate.id
-    label = st.radio("🌐 لغة العرض", list(_LANG_OPTIONS), horizontal=True, key=f"lang_{cid}", label_visibility="collapsed")
+    original = candidate_language(candidate)
+    labels = list(_LANG_OPTIONS)
+    label = st.radio(
+        "🌐 لغة العرض", labels, index=labels.index(_LANG_LABELS[original]),
+        horizontal=True, key=f"lang_{cid}", label_visibility="collapsed",
+    )
     lang = _LANG_OPTIONS[label]
-    if lang == "ar" and not (candidate.translations or {}).get("ar"):
-        st.info("لا توجد ترجمة عربية بعد (تُعرض الإنجليزية مؤقتاً).")
-        if st.button("🌐 ترجمة البيانات إلى العربية", key=f"translate_{cid}"):
-            try:
-                with st.spinner("جاري الترجمة..."):
-                    with get_db_session() as session:
-                        CandidateService(session).translate_candidate(cid, "ar")
-                clear_related_caches()
-                st.rerun()
-            except SmartATSError as exc:
-                st.error(str(exc))
-        return "en"
-    return lang
+    if lang == original or (candidate.translations or {}).get(lang):
+        return lang
 
+    tried_key = _TRANSLATION_TRIED.format(cid)
+    if not st.session_state.get(tried_key) and get_settings().ai_enabled:
+        st.session_state[tried_key] = True
+        background_analysis.submit_translation(cid)
+    if background_analysis.is_translating(cid):
+        st.fragment(_translation_notice, run_every=_POLL_SECONDS)(cid)
+        return original
+
+    st.info("لا توجد ترجمة لهذه اللغة بعد (يُعرض الأصل مؤقتاً).")
+    if st.button("🌐 ترجمة الآن", key=f"translate_{cid}"):
+        try:
+            with st.spinner("جاري الترجمة..."):
+                with get_db_session() as session:
+                    CandidateService(session).translate_candidate(cid, lang, force=True)
+            clear_related_caches()
+            st.rerun()
+        except SmartATSError as exc:
+            st.error(str(exc))
+    return original
 
 
 def _render_overview(candidate: Candidate, lang: str) -> None:
     st.markdown('<div class="cp-title">📝 الملخص</div>', unsafe_allow_html=True)
     st.write(_value(candidate, "summary", lang) or _NOT_MENTIONED)
 
-    analysis = candidate.ai_analysis or {}
+    analysis = analysis_for_language(candidate, lang)
     if analysis.get("strengths"):
         st.markdown('<div class="cp-title">✓ أبرز نقاط القوة (تقييم الذكاء الاصطناعي)</div>', unsafe_allow_html=True)
         for s in analysis["strengths"][:3]:
@@ -346,25 +367,24 @@ def _render_suitable_jobs(candidate_id: int) -> None:
             for line in r["gaps"]:
                 st.write(line)
 
-
-
-def _render_ai_analysis(candidate_id: int) -> None:
+def _render_ai_analysis(candidate_id: int, lang: str) -> None:
     st.markdown("**🤖 تحليل الذكاء الاصطناعي**")
-    polling = background_analysis.is_pending(candidate_id)
-    st.fragment(_analysis_panel, run_every=_POLL_SECONDS if polling else None)(candidate_id, polling)
+    polling = background_analysis.is_pending(candidate_id) or background_analysis.is_translating(candidate_id)
+    st.fragment(_analysis_panel, run_every=_POLL_SECONDS if polling else None)(candidate_id, polling, lang)
 
 
-def _analysis_panel(candidate_id: int, polling: bool) -> None:
+def _analysis_panel(candidate_id: int, polling: bool, lang: str) -> None:
     with get_db_session() as session:
         candidate = CandidateService(session).get_by_id(candidate_id)
     if candidate is None:
         return
 
     in_memory = background_analysis.is_pending(candidate_id)
-    if polling and not in_memory:
+    if polling and not in_memory and not background_analysis.is_translating(candidate_id):
         st.rerun()
 
-    analysis = candidate.ai_analysis or {}
+    raw = candidate.ai_analysis or {}
+    analysis = analysis_for_language(candidate, lang)
     status, error = candidate.analysis_status, candidate.analysis_error
     if status == "pending" and not in_memory:
         status, error = "failed", "انقطعت المعالجة قبل اكتمالها. أعد التحليل."
@@ -374,21 +394,30 @@ def _analysis_panel(candidate_id: int, polling: bool) -> None:
     else:
         if status == "failed":
             st.error(f"❌ فشل التحليل: {error or 'سبب غير معروف'}")
-        elif not analysis:
+        elif not raw:
             st.caption("لم يتم توليد تحليل الذكاء الاصطناعي لهذا المرشح بعد.")
-        label = "🔄 إعادة التحليل" if analysis else "🤖 توليد التحليل"
+        label = "🔄 إعادة التحليل" if raw else "🤖 توليد التحليل"
         if st.button(label, key=f"analysis_btn_{candidate_id}"):
             try:
                 with st.spinner("جاري التحليل..."):
                     with get_db_session() as session:
-                        CandidateService(session).generate_ai_analysis(candidate_id, force=bool(analysis))
+                        CandidateService(session).generate_ai_analysis(candidate_id, force=bool(raw))
                 clear_related_caches()
                 st.rerun()
             except SmartATSError as exc:
                 st.error(str(exc))
 
-    if not analysis:
+    if not raw:
         return
+
+    if lang != analysis_language(raw) and analysis is raw and not in_memory:
+        tried_key = f"tr_analysis_tried_{candidate_id}"
+        if not st.session_state.get(tried_key) and get_settings().ai_enabled:
+            st.session_state[tried_key] = True
+            background_analysis.submit_translation(candidate_id)
+        if background_analysis.is_translating(candidate_id):
+            st.caption("⏳ جاري ترجمة التحليل (يُعرض الأصل مؤقتاً).")
+
     if analysis.get("career_level"):
         st.write(f"📈 المستوى الوظيفي: **{analysis['career_level']}**")
     if analysis.get("strengths"):
@@ -402,15 +431,14 @@ def _analysis_panel(candidate_id: int, polling: bool) -> None:
     if analysis.get("suitable_functions"):
         st.markdown("**الأقسام/الوظائف المناسبة:**")
         st.markdown(components.chips(analysis["suitable_functions"]), unsafe_allow_html=True)
-    meta = analysis.get("meta") or {}
+    meta = raw.get("meta") or {}
     if meta:
         st.caption(f" {meta.get('created_at', '')[:16]}")
 
-
-
 def _render_edit_form(candidate: Candidate, photo_path) -> None:
     cid = candidate.id
-    st.caption("التعديل يتم على النسخة الإنجليزية (الأصل). عند تعديل محتوى مترجَم تُمسح الترجمة القديمة ويمكن إعادة ترجمتها.")
+    original = candidate_language(candidate)
+    st.caption("التعديل يتم على النسخة الأصلية (لغة السيرة). عند تعديل المحتوى تُمسح الترجمة وتُعاد تلقائياً.")
     with st.form(f"edit_candidate_form_{cid}"):
         full_name = st.text_input("الاسم الكامل *", value=candidate.full_name, key=f"name_{cid}")
         email = st.text_input("البريد الإلكتروني", value=candidate.email or "", key=f"email_{cid}")
@@ -434,7 +462,7 @@ def _render_edit_form(candidate: Candidate, photo_path) -> None:
         for label, attr in _SKILL_SECTIONS + _BACKGROUND_SECTIONS + [_LANGUAGES_SECTION]:
             raw_lists[attr] = st.text_area(
                 f"{label} (مفصولة بفاصلة)",
-                value=", ".join(_value(candidate, attr, "en") or []),
+                value=", ".join(_value(candidate, attr, original) or []),
                 key=f"{attr}_{cid}",
                 height=80,
             )
@@ -495,12 +523,12 @@ def _render_edit_form(candidate: Candidate, photo_path) -> None:
                 service.remove_photo(cid)
             elif new_photo is not None:
                 service.set_photo(cid, new_photo.getvalue())
+        st.session_state.pop(_TRANSLATION_TRIED.format(cid), None)
         clear_related_caches()
         st.toast("تم حفظ التعديلات ✅")
         st.rerun()
     except SmartATSError as exc:
         st.error(str(exc))
-
 
 def render_drawer(candidate_id: int, summary: dict | None = None, *, embedded: bool = False) -> None:
     with get_db_session() as session:
@@ -527,7 +555,7 @@ def render_drawer(candidate_id: int, summary: dict | None = None, *, embedded: b
     with tab_exp:
         _render_experience(candidate, lang, collapsible=not embedded)
     with tab_ai:
-        _render_ai_analysis(candidate.id)
+        _render_ai_analysis(candidate.id, lang)
     with tab_jobs:
         _render_suitable_jobs(candidate_id)
     with tab_details:

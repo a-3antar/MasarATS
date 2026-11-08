@@ -1,4 +1,3 @@
-
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -14,7 +13,9 @@ logger = get_logger(__name__)
 
 _executor = ThreadPoolExecutor(max_workers=AI_BACKGROUND_WORKERS, thread_name_prefix="ai-analysis")
 _photo_executor = ThreadPoolExecutor(max_workers=PHOTO_BACKGROUND_WORKERS, thread_name_prefix="face-crop")
+_translation_executor = ThreadPoolExecutor(max_workers=AI_BACKGROUND_WORKERS, thread_name_prefix="translation")
 _pending: set[int] = set()
+_translating: set[int] = set()
 _lock = threading.Lock()
 
 
@@ -54,9 +55,29 @@ def submit_photo(candidate_id: int, page_png: bytes | None) -> None:
         _photo_executor.submit(_run_photo, candidate_id, page_png)
 
 
+def submit_translation(candidate_id: int) -> None:
+    if not _ai_available():
+        return
+    with _lock:
+        if candidate_id in _translating:
+            return
+        _translating.add(candidate_id)
+    try:
+        _translation_executor.submit(_run_translation, candidate_id)
+    except Exception:
+        with _lock:
+            _translating.discard(candidate_id)
+        raise
+
+
 def is_pending(candidate_id: int) -> bool:
     with _lock:
         return candidate_id in _pending
+
+
+def is_translating(candidate_id: int) -> bool:
+    with _lock:
+        return candidate_id in _translating
 
 
 def _run(candidate_id: int) -> None:
@@ -66,6 +87,11 @@ def _run(candidate_id: int) -> None:
         with get_db_session() as session:
             CandidateService(session).generate_ai_analysis(candidate_id, retry=True)
         logger.info("Background AI analysis finished for candidate %s", candidate_id)
+        try:
+            with get_db_session() as session:
+                CandidateService(session).translate_analysis(candidate_id)
+        except SmartATSError as exc:
+            logger.warning("Analysis translation failed for candidate %s: %s", candidate_id, exc)
     except SmartATSError as exc:
         logger.warning("Background AI analysis failed for candidate %s: %s", candidate_id, exc)
         _safe_mark_failed(candidate_id, str(exc))
@@ -75,6 +101,32 @@ def _run(candidate_id: int) -> None:
     finally:
         with _lock:
             _pending.discard(candidate_id)
+
+
+def _run_translation(candidate_id: int) -> None:
+    from ai.retry import call_with_retry
+    from services.candidate_service import CandidateService
+
+    def translate_data() -> None:
+        with get_db_session() as session:
+            CandidateService(session).translate_candidate(candidate_id)
+
+    def translate_analysis() -> None:
+        with get_db_session() as session:
+            CandidateService(session).translate_analysis(candidate_id)
+
+    try:
+        for step in (translate_data, translate_analysis):
+            try:
+                call_with_retry(step)
+            except SmartATSError as exc:
+                logger.warning("Background translation step failed for candidate %s: %s", candidate_id, exc)
+        logger.info("Background translation finished for candidate %s", candidate_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Unexpected error in background translation for candidate %s", candidate_id)
+    finally:
+        with _lock:
+            _translating.discard(candidate_id)
 
 
 def _safe_mark_failed(candidate_id: int, message: str) -> None:

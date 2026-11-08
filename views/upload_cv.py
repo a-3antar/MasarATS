@@ -133,6 +133,7 @@ def _run_batch(uploaded_files) -> None:
     for item in results:
         if item["status"] == _OK:
             background_analysis.submit(item["id"])
+            background_analysis.submit_translation(item["id"])
             background_analysis.submit_photo(item["id"], item.pop("face_image", None))
         else:
             item.pop("face_image", None)
