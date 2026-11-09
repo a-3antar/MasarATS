@@ -1,4 +1,3 @@
-
 from contextlib import contextmanager
 from typing import Generator
 
@@ -53,8 +52,8 @@ def _add_missing_columns() -> None:
 
 def init_db() -> None:
     from models import (
-        application, application_stage_history, candidate, department, interview, interview_answer,
-        job, job_question, offer, position, user,
+        application, application_stage_history, candidate, candidate_photo, department, interview,
+        interview_answer, job, job_question, offer, position, user,
     )  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()

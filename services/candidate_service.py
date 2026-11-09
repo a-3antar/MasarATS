@@ -1,6 +1,6 @@
-
 import hashlib
 import io
+import os
 import re
 import uuid
 from datetime import date
@@ -22,8 +22,10 @@ from core.constants import (
 )
 from core.exceptions import AIServiceError, DuplicateCandidateError, ValidationError
 from core.logging import get_logger
+from database.database import get_db_session
 from document_processing.factory import DocumentParserFactory
 from models.candidate import Candidate
+from models.candidate_photo import CandidatePhoto
 from repositories.candidate_repository import CandidateRepository
 from services.experience_calculator import estimate_total_years
 from services.duplicate_detector import DuplicateDetector
@@ -162,6 +164,9 @@ class CandidateService:
 
             photo, page_png = photo_future.result()
 
+        photo_jpeg = self._encode_photo(photo[0]) if photo else None
+        photo_rel = f"{PHOTOS_SUBDIR}/{file_hash[:16]}.jpg" if photo_jpeg else None
+
         profile.experience = sort_experience_newest_first(profile.experience)
         latest = profile.experience[0] if profile.experience else None
         position = (latest.position if latest and latest.position else None) or profile.current_position
@@ -173,7 +178,7 @@ class CandidateService:
             location=profile.location,
             birth_date=profile.birth_date,
             age=calculate_age(profile.birth_date) or profile.age,
-            photo_path=self._save_photo(photo[0], file_hash[:16]) if photo else None,
+            photo_path=photo_rel,
             marital_status=profile.marital_status,
             military_status=profile.military_status,
             languages=profile.languages,
@@ -198,6 +203,8 @@ class CandidateService:
         )
         self._candidates.add(candidate)
         self._assign_code(candidate)
+        if photo_jpeg and photo_rel:
+            self._store_photo(candidate.id, photo_jpeg, photo_rel)
 
         candidate.duplicate_warning = " | ".join(m.describe() for m in matches) or None
 
@@ -230,6 +237,7 @@ class CandidateService:
             )
             self._session.execute(delete(Application).where(Application.id.in_(app_ids)))
 
+        self._session.execute(delete(CandidatePhoto).where(CandidatePhoto.candidate_id == candidate_id))
         self._delete_photo_file(candidate.photo_path)
         self._candidates.delete(candidate)
         logger.info("Candidate %s deleted", candidate_id)
@@ -319,8 +327,11 @@ class CandidateService:
             return hashlib.sha256(f.read()).hexdigest()
 
 
+    # ---------- الصور: المصدر الحقيقي هو جدول candidate_photos ----------
+    # photo_path في جدول المرشحين يبقى كعلامة وجود صورة ومسار ملف مؤقت (كاش) على القرص.
+
     @staticmethod
-    def _save_photo(image_bytes: bytes, name_stem: str) -> str | None:
+    def _encode_photo(image_bytes: bytes) -> bytes | None:
         try:
             from PIL import Image
 
@@ -333,36 +344,79 @@ class CandidateService:
                     image = source.convert("RGB")
 
             image.thumbnail((PHOTO_MAX_SIDE_PX, PHOTO_MAX_SIDE_PX))
-            PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
-            target = PHOTOS_DIR / f"{name_stem}.jpg"
-            image.save(target, format="JPEG", quality=90)
-            return target.relative_to(BASE_DIR).as_posix()
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=90)
+            return buffer.getvalue()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to save candidate photo: %s", exc)
+            logger.warning("Failed to encode candidate photo: %s", exc)
             return None
+
+    @staticmethod
+    def _write_cache(relative_path: str, data: bytes) -> None:
+        try:
+            target = BASE_DIR / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temp = target.with_name(f"{target.name}.{uuid.uuid4().hex[:8]}.tmp")
+            temp.write_bytes(data)
+            os.replace(temp, target)
+        except OSError as exc:
+            logger.warning("Failed to write photo cache file %s: %s", relative_path, exc)
+
+    def _store_photo(self, candidate_id: int, jpeg_bytes: bytes, relative_path: str) -> None:
+        row = self._session.get(CandidatePhoto, candidate_id)
+        if row is None:
+            self._session.add(CandidatePhoto(candidate_id=candidate_id, data=jpeg_bytes))
+        else:
+            row.data = jpeg_bytes
+            row.updated_at = datetime.now(timezone.utc)
+        self._write_cache(relative_path, jpeg_bytes)
 
     @staticmethod
     def _delete_photo_file(relative_path: str | None) -> None:
         if relative_path:
-            (BASE_DIR / relative_path).unlink(missing_ok=True)
+            try:
+                (BASE_DIR / relative_path).unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("Failed to delete photo cache file %s: %s", relative_path, exc)
 
     @staticmethod
     def photo_absolute_path(candidate: Candidate) -> Path | None:
+        """مسار ملف الصورة للعرض: يُعاد بناؤه من قاعدة البيانات إن لم يكن موجوداً على القرص."""
         if not candidate.photo_path:
             return None
         path = BASE_DIR / candidate.photo_path
+        if path.exists():
+            return path
+
+        try:
+            with get_db_session() as session:
+                data = session.scalar(
+                    select(CandidatePhoto.data).where(CandidatePhoto.candidate_id == candidate.id)
+                )
+        except Exception as exc:  # noqa: BLE001 - فشل القراءة لا يوقف الصفحة
+            logger.warning("Failed to load photo for candidate %s: %s", candidate.id, exc)
+            return None
+        if not data:
+            return None
+
+        CandidateService._write_cache(candidate.photo_path, data)
         return path if path.exists() else None
 
     def set_photo(self, candidate_id: int, image_bytes: bytes) -> None:
         candidate = self._get_or_raise(candidate_id)
-        new_path = self._save_photo(image_bytes, f"candidate_{candidate_id}_{uuid.uuid4().hex[:8]}")
-        if new_path is None:
+        jpeg = self._encode_photo(image_bytes)
+        if jpeg is None:
             raise ValidationError("تعذّر قراءة الصورة. استخدم ملف PNG أو JPG صالحاً.")
-        self._delete_photo_file(candidate.photo_path)
+
+        old_path = candidate.photo_path
+        new_path = f"{PHOTOS_SUBDIR}/candidate_{candidate_id}_{uuid.uuid4().hex[:8]}.jpg"
+        self._store_photo(candidate_id, jpeg, new_path)
+        self._delete_photo_file(old_path)
         candidate.photo_path = new_path
 
     def remove_photo(self, candidate_id: int) -> None:
         candidate = self._get_or_raise(candidate_id)
+        self._session.execute(delete(CandidatePhoto).where(CandidatePhoto.candidate_id == candidate_id))
         self._delete_photo_file(candidate.photo_path)
         candidate.photo_path = None
 
