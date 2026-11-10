@@ -109,6 +109,8 @@ def _smart_search(query: str) -> dict:
 
 @st.cache_data(ttl=_LIST_TTL, show_spinner="جاري تجهيز الملف...")
 def _export(kind: str, ids: tuple[int, ...], lang: str = "ar") -> bytes:
+    from services.job_service import JobService
+    from services.matching_service import MatchingService
     wanted = set(ids)
     data = _load_data()
     selected = [c for c in data["candidates"] if c.id in wanted]
@@ -119,8 +121,9 @@ def _export(kind: str, ids: tuple[int, ...], lang: str = "ar") -> bytes:
     photos = {cid: Path(p) for cid, p in data["photos"].items() if p and cid in wanted}
     with get_db_session() as session:
         interviews = InterviewService(session).export_rows_by_candidate(ids)
+        top_jobs = MatchingService(session).export_top_jobs(list(ids), JobService(session).list_all())
     return ExportService.candidates_to_organized_workbook_bytes(
-        selected, lang=lang, photos=photos, interviews=interviews
+        selected, lang=lang, photos=photos, interviews=interviews, top_jobs=top_jobs
     )
 
 

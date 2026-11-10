@@ -10,6 +10,7 @@ from openpyxl.utils import get_column_letter
 from models.candidate import Candidate
 from models.job import Job
 from services.candidate_service import analysis_for_language, localized_value
+from services.experience_calculator import experience_timeline
 
 
 def _join(items: list | None) -> str:
@@ -60,6 +61,7 @@ _DECISION_AR = {
     "Hold": "تعليق", "Not Selected": "غير مختار",
 }
 _IV_STATUS_AR = {"Scheduled": "مجدولة", "In Progress": "جارية", "Completed": "مكتملة", "Cancelled": "ملغاة"}
+_JOB_STATUS_AR = {"Draft": "مسودة", "Open": "مفتوحة", "On Hold": "معلّقة", "Closed": "مغلقة"}
 
 _T = {
     "ar": {
@@ -69,6 +71,12 @@ _T = {
         "interviews": "المقابلات والتقييم", "q": "س{n}", "overall_ai": "تقييم الذكاء الاصطناعي",
         "manual": "تقييم المُقابِل", "effective": "الدرجة الفعلية", "feedback": "ملاحظات التحليل",
         "inotes": "ملاحظات المُقابِل", "answer": "الإجابة",
+        "jobs_best": "أفضل 5 وظائف للمرشح (حسب نسبة المطابقة)",
+        "jobs_open": "أفضل 5 وظائف شاغرة (مفتوحة) حسب نسبة المطابقة",
+        "job": "الوظيفة", "job_status": "حالة الوظيفة", "match": "نسبة المطابقة", "no_jobs": "لا توجد وظائف للمطابقة",
+        "exp_title": "الخبرات السابقة (من الأحدث إلى الأقدم)", "exp_position": "الوظيفة", "exp_company": "الشركة",
+        "exp_period": "الفترة", "exp_duration": "المدة", "no_exp": "لا توجد خبرات مسجّلة",
+        "decision_none": "لم يُحدَّد بعد", "method_auto": "محسوبة تلقائياً", "method_manual": "معدَّلة يدوياً من المُقابِل",
     },
     "en": {
         "index_title": "Candidates Index", "index_sub": "Click a candidate name to open the profile page",
@@ -77,12 +85,20 @@ _T = {
         "interviews": "Interviews & evaluation", "q": "Q{n}", "overall_ai": "AI score",
         "manual": "Interviewer score", "effective": "Effective score", "feedback": "Analysis feedback",
         "inotes": "Interviewer notes", "answer": "Answer",
+        "jobs_best": "Top 5 jobs for the candidate (by match %)",
+        "jobs_open": "Top 5 open vacancies (by match %)",
+        "job": "Job", "job_status": "Job status", "match": "Match %", "no_jobs": "No jobs to match",
+        "exp_title": "Work experience (newest to oldest)", "exp_position": "Position", "exp_company": "Company",
+        "exp_period": "Period", "exp_duration": "Duration", "no_exp": "No experience recorded",
+        "decision_none": "Not decided yet", "method_auto": "Auto-calculated", "method_manual": "Manually set by interviewer",
     },
 }
 
 _IV_FIELDS = [  # (مفتاح، عربي، إنجليزي)
     ("interviewer", "المُقابِل", "Interviewer"), ("status", "الحالة", "Status"),
-    ("overall", "الدرجة النهائية (من 100)", "Overall score (/100)"), ("decision", "القرار", "Decision"),
+    ("decision", "القرار (الموقف من المرشح)", "Decision"),
+    ("overall", "الدرجة النهائية (من 100)", "Overall score (/100)"),
+    ("method", "مصدر الدرجة النهائية", "Overall score source"),
     ("overall_notes", "ملاحظات التقييم النهائي", "Final evaluation notes"),
     ("notes", "ملاحظات المُقابِل", "Interviewer notes"),
 ]
@@ -260,6 +276,54 @@ def _answer_text(a: dict, t: dict) -> str:
     return "\n".join(lines)
 
 
+def _org_draw_table(sheet, row: int, headers: list[str], rows: list[tuple]) -> int:
+    for col, header in enumerate(headers, start=1):
+        cell = sheet.cell(row=row, column=col, value=header)
+        cell.font = Font(name="Calibri", bold=True, color=_ORG_COLOR_FIELD_TEXT)
+        cell.fill = PatternFill("solid", fgColor=_ORG_COLOR_FIELD_BG)
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+    row += 1
+    for values in rows:
+        for col, value in enumerate(values, start=1):
+            cell = sheet.cell(row=row, column=col)
+            _org_safe_text_cell(cell, _org_display_value(value))
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+        row += 1
+    return row
+
+
+def _org_draw_jobs(sheet, row: int, top_jobs: dict | None, lang: str) -> int:
+    t, rtl = _T[lang], lang == "ar"
+    for title_key, key in (("jobs_best", "best"), ("jobs_open", "open")):
+        _org_draw_section_header(sheet, row, t[title_key], rtl)
+        row += 1
+        items = (top_jobs or {}).get(key) or []
+        if not items:
+            _org_draw_field_row(sheet, row, "—", t["no_jobs"])
+            row += 1
+            continue
+        rows = [
+            (title, _JOB_STATUS_AR.get(status, status) if rtl else status, f"{score:g}%")
+            for title, status, score in items
+        ]
+        row = _org_draw_table(sheet, row, [t["job"], t["job_status"], t["match"]], rows)
+    return row
+
+
+def _org_draw_experience(sheet, row: int, candidate: Candidate, lang: str) -> int:
+    t, rtl = _T[lang], lang == "ar"
+    _org_draw_section_header(sheet, row, t["exp_title"], rtl)
+    row += 1
+    timeline = experience_timeline(_v(candidate, "experience", lang), lang)
+    if not timeline:
+        _org_draw_field_row(sheet, row, "—", t["no_exp"])
+        return row + 1
+    rows = [(r["position"], r["company"], f"{r['period']}  ({r['duration']})") for r in timeline]
+    return _org_draw_table(
+        sheet, row, [t["exp_position"], t["exp_company"], f"{t['exp_period']} / {t['exp_duration']}"], rows
+    )
+
+
 def _org_draw_interviews(sheet, row: int, interviews: list[dict], lang: str) -> int:
     i, t, rtl = (0 if lang == "ar" else 1), _T[lang], lang == "ar"
     _org_draw_section_header(sheet, row, t["interviews"], rtl)
@@ -271,10 +335,12 @@ def _org_draw_interviews(sheet, row: int, interviews: list[dict], lang: str) -> 
         head = f"{iv['code']} · {iv['type']} · {iv['job']} · {iv['when']}"
         _org_draw_section_header(sheet, row, head, rtl)
         row += 1
+        decision = iv["decision"]
         values = {
             **iv,
             "status": _IV_STATUS_AR.get(iv["status"], iv["status"]) if rtl else iv["status"],
-            "decision": _DECISION_AR.get(iv["decision"], iv["decision"]) if rtl else iv["decision"],
+            "decision": (_DECISION_AR.get(decision, decision) if rtl else decision) if decision else t["decision_none"],
+            "method": {"manual": t["method_manual"], "auto": t["method_auto"]}.get(iv.get("method")),
         }
         for key, ar, en in _IV_FIELDS:
             _org_draw_field_row(sheet, row, (ar, en)[i], values.get(key))
@@ -287,6 +353,7 @@ def _org_draw_interviews(sheet, row: int, interviews: list[dict], lang: str) -> 
 
 def _org_build_candidate_sheet(
     workbook: Workbook, candidate: Candidate, sheet_name: str, lang: str, photo, interviews: list[dict],
+    top_jobs: dict | None = None,
 ) -> None:
     i, t, rtl = (0 if lang == "ar" else 1), _T[lang], lang == "ar"
     sheet = workbook.create_sheet(sheet_name)
@@ -319,6 +386,8 @@ def _org_build_candidate_sheet(
             _org_draw_field_row(sheet, row, (ar, en)[i], getter(candidate, lang))
             row += 1
 
+    row = _org_draw_experience(sheet, row, candidate, lang)
+    row = _org_draw_jobs(sheet, row, top_jobs, lang)
     _org_draw_interviews(sheet, row, interviews, lang)
 
     if photo:
@@ -483,9 +552,11 @@ class ExportService:
         lang: str = "ar",
         photos: dict | None = None,
         interviews: dict[int, list[dict]] | None = None,
+        top_jobs: dict[int, dict] | None = None,
     ) -> bytes:
         lang = lang if lang in _T else "ar"
         photos, interviews = photos or {}, interviews or {}
+        top_jobs = top_jobs or {}
         reserved = {_ORG_INDEX_SHEET_NAME[lang], _ORG_FLAT_SHEET_NAME}
 
         workbook = Workbook()
@@ -503,7 +574,7 @@ class ExportService:
         for sheet_name, candidate in entries:
             _org_build_candidate_sheet(
                 workbook, candidate, sheet_name, lang,
-                photos.get(candidate.id), interviews.get(candidate.id, []),
+                photos.get(candidate.id), interviews.get(candidate.id, []), top_jobs.get(candidate.id),
             )
 
         order = ([_ORG_FLAT_SHEET_NAME] if include_flat_sheet else []) + [_ORG_INDEX_SHEET_NAME[lang]] + [

@@ -37,6 +37,21 @@ class MatchingService:
         results.sort(key=lambda r: r["score"], reverse=True)
         return results
 
+    def export_top_jobs(self, candidate_ids: list[int], jobs: list[Job], limit: int = 5) -> dict[int, dict]:
+        result: dict[int, dict] = {}
+        for candidate_id in candidate_ids:
+            candidate = self._session.get(Candidate, candidate_id)
+            if candidate is None or not jobs:
+                continue
+            ranked = self.rank_jobs_for_candidate(candidate, jobs)
+            row = lambda r: (r["job"].title, r["job"].status, r["score"])  # noqa: E731
+            result[candidate_id] = {
+                "best": [row(r) for r in ranked[:limit]],
+                "open": [row(r) for r in ranked if r["job"].status == "Open"][:limit],
+            }
+        return result
+
+
     def rank_candidates_for_job(self, job: Job, candidates: list[Candidate]) -> list[dict]:
         if hasattr(self._engine, "warm_up_candidates"):
             self._engine.warm_up_candidates(candidates, job)

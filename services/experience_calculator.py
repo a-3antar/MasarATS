@@ -102,3 +102,35 @@ def estimate_total_years(experience: list[ExperienceItem], today: date | None = 
     total_months += current_end - current_start
 
     return round(total_months / 12, 1)
+
+_DURATION_UNITS = {
+    "ar": ("سنة", "شهر", " و ", "أقل من شهر", "حتى الآن"),
+    "en": ("yr", "mo", " ", "< 1 mo", "Present"),
+}
+
+
+def _format_duration(months: int | None, lang: str) -> str:
+    year_word, month_word, joiner, short, _ = _DURATION_UNITS[lang]
+    if months is None:
+        return "-"
+    years, rest = divmod(months, 12)
+    parts = ([f"{years} {year_word}"] if years else []) + ([f"{rest} {month_word}"] if rest else [])
+    return joiner.join(parts) or short
+
+
+def experience_timeline(experience: list[dict] | None, lang: str = "ar", today: date | None = None) -> list[dict]:
+    today = today or date.today()
+    allowed = ExperienceItem.model_fields
+    items = [ExperienceItem(**{k: v for k, v in (e or {}).items() if k in allowed}) for e in experience or []]
+    present = _DURATION_UNITS[lang][4]
+    rows = []
+    for item in sort_experience_newest_first(items, today):
+        start, end = _bounds(item, today)
+        months = max(end - start, 0) if start is not None and end is not None else None
+        is_current = any(w in (item.end_date or "").lower() for w in _PRESENT_WORDS)
+        period = " → ".join(p for p in (item.start_date, present if is_current else item.end_date) if p)
+        rows.append({
+            "position": item.position, "company": item.company,
+            "period": period or "-", "duration": _format_duration(months, lang),
+        })
+    return rows
