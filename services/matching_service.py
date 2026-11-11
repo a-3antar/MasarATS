@@ -84,6 +84,7 @@ class MatchingService:
             "breakdown": result["breakdown"],
             "strengths": result["strengths"],
             "gaps": result["gaps"],
+            "overqualified": result.get("overqualified"),
         }
         return application
 

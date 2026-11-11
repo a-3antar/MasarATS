@@ -89,7 +89,9 @@ def _run_matching(job_id: int) -> None:
 def _render_summary(rows: list[dict]) -> None:
     strong = [r for r in rows if r["score"] >= MATCH_HIGH_THRESHOLD]
     recommended = [
-        r for r in strong if not r["interviewed"] and r["status"] not in _NO_RECOMMEND_STAGES
+        r for r in strong
+        if not r["interviewed"] and r["status"] not in _NO_RECOMMEND_STAGES
+        and (r["detail"].get("overqualified") or {}).get("level") != "high"
     ]
     col_a, col_b, col_c = st.columns(3)
     col_a.metric("👥 مرشحون تمت مطابقتهم", len(rows))
@@ -115,6 +117,11 @@ def _render_explanation(r: dict) -> None:
         st.markdown("**مهارات تحتاج تحققاً**")
         for line in gaps:
             st.write(f"⚠ {clean_line(line)}")
+    over = detail.get("overqualified") or {}
+    if over.get("reasons"):
+        st.markdown("**مؤهل أكثر من اللازم**")
+        for line in over["reasons"]:
+            st.write(f"⬆️ {line}")
     st.caption("تقدير آلي مبني على السيرة الذاتية — القرار النهائي لك.")
 
 
@@ -128,6 +135,10 @@ def _render_card(r: dict, job_id: int, job_title: str) -> None:
         col_info, col_score = st.columns([4, 1], vertical_alignment="center")
         col_info.markdown(f"**{html.escape(r['name'])}** — {r['status']}")
         col_info.caption(meta or "-")
+        over = r["detail"].get("overqualified")
+        if over and over.get("level") in ("moderate", "high"):
+            col_info.markdown(components.overqualified_badge(over), unsafe_allow_html=True)
+        
         col_score.markdown(
             f'<div style="text-align:center;font-size:1.3rem;font-weight:800;color:{score_color(score)}">{score:g}%</div>',
             unsafe_allow_html=True,

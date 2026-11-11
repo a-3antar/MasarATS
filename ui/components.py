@@ -9,7 +9,15 @@ from ui.theme import COLORS, score_color
 
 _PCT_MAX = 100.0
 _DEFAULT_AVATAR_PX = 44
+_OVERQ = {
+    "moderate": ("⬆️ مؤهل زيادة عن اللازم", COLORS["warning"]),
+    "high": ("⬆️ مؤهل زيادة جداً", COLORS["danger"]),
+}
 
+
+def overqualified_badge(info: dict | None) -> str:
+    label = _OVERQ.get((info or {}).get("level"))
+    return badge(*label) if label else ""
 
 def _pct(value) -> float:
     return max(0.0, min(_PCT_MAX, float(value or 0)))

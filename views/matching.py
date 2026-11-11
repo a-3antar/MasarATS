@@ -129,6 +129,8 @@ def _render_match_details(r: dict) -> None:
             components.labeled_bar(label, r["breakdown"][key])
             for key, label in _BREAKDOWN_LABELS.items() if key in r["breakdown"]
         )
+        for line in (r.get("overqualified") or {}).get("reasons", []):
+            st.write(f"⬆️ {line}")
         st.markdown(bars, unsafe_allow_html=True)
 
         st.markdown("**نقاط القوة**")
@@ -179,6 +181,9 @@ def _render_kanban_card(r: dict, status: str) -> None:
             ),
             unsafe_allow_html=True,
         )
+        over = components.overqualified_badge(r.get("overqualified"))
+        if over:
+            st.markdown(over, unsafe_allow_html=True)
         _render_match_details(r)
 
         with _scroll_container(f"kb-row-{application_id}"):
@@ -270,6 +275,9 @@ def _render_job_result(r: dict) -> None:
     avatar = components.avatar(job.title)
     with st.container(border=True):
         st.markdown(_head_html(avatar, job.title, subtitle, r["score"]), unsafe_allow_html=True)
+        over = components.overqualified_badge(r.get("overqualified"))
+        if over:
+            st.markdown(over, unsafe_allow_html=True)
         _render_match_details(r)
 
 
